@@ -1,13 +1,5 @@
 import Foundation
 
-/// Errors that can occur during quaternion decoding
-public enum QuaternionDecoderError: Error, Equatable {
-    case emptyPayload
-    case invalidFormat(reason: String)
-    case invalidComponentCount(expected: Int, actual: Int)
-    case invalidNumericValue(component: String, value: String)
-}
-
 /// Decodes orientation quaternion messages from the GoCube protocol
 public struct QuaternionDecoder: Sendable {
 
@@ -22,15 +14,15 @@ public struct QuaternionDecoder: Sendable {
     /// Decode an orientation message payload
     /// - Parameter payload: Raw payload bytes from an orientation message (type 0x03)
     /// - Returns: Decoded quaternion
-    /// - Throws: QuaternionDecoderError if decoding fails
+    /// - Throws: GoCubeError.parsing if decoding fails
     public func decode(_ payload: Data) throws -> Quaternion {
         guard !payload.isEmpty else {
-            throw QuaternionDecoderError.emptyPayload
+            throw GoCubeError.parsing(.invalidQuaternionFormat(reason: "Empty payload"))
         }
 
         // Convert payload to string (ASCII format: "x#y#z#w")
         guard let string = String(data: payload, encoding: .utf8) else {
-            throw QuaternionDecoderError.invalidFormat(reason: "Not valid UTF-8")
+            throw GoCubeError.parsing(.invalidQuaternionFormat(reason: "Not valid UTF-8"))
         }
 
         return try decode(string: string)
@@ -39,33 +31,29 @@ public struct QuaternionDecoder: Sendable {
     /// Decode a quaternion from its string representation
     /// - Parameter string: ASCII format string "x#y#z#w"
     /// - Returns: Decoded quaternion
-    /// - Throws: QuaternionDecoderError if parsing fails
+    /// - Throws: GoCubeError.parsing if parsing fails
     public func decode(string: String) throws -> Quaternion {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmed.isEmpty else {
-            throw QuaternionDecoderError.emptyPayload
+            throw GoCubeError.parsing(.invalidQuaternionFormat(reason: "Empty string"))
         }
 
         let components = trimmed.split(separator: Self.separator, omittingEmptySubsequences: false)
 
         guard components.count == Self.componentCount else {
-            throw QuaternionDecoderError.invalidComponentCount(
+            throw GoCubeError.parsing(.invalidQuaternionComponentCount(
                 expected: Self.componentCount,
                 actual: components.count
-            )
+            ))
         }
 
-        let componentNames = ["x", "y", "z", "w"]
         var values: [Double] = []
 
-        for (index, component) in components.enumerated() {
+        for component in components {
             let valueString = String(component).trimmingCharacters(in: .whitespaces)
             guard let value = Double(valueString) else {
-                throw QuaternionDecoderError.invalidNumericValue(
-                    component: componentNames[index],
-                    value: valueString
-                )
+                throw GoCubeError.parsing(.invalidQuaternionComponent(component: valueString))
             }
             values.append(value)
         }
@@ -89,14 +77,14 @@ public struct QuaternionDecoder: Sendable {
     }
 }
 
-// MARK: - Quaternion Smoothing
+// MARK: - Quaternion Smoothing Actor
 
-/// Smooths quaternion updates for display purposes
-public class QuaternionSmoother: @unchecked Sendable {
+/// Actor that smooths quaternion updates for display purposes
+/// Thread-safe by design using Swift's actor model
+public actor QuaternionSmoother {
     private var lastQuaternion: Quaternion?
     private var targetQuaternion: Quaternion?
     private let smoothingFactor: Double
-    private let lock = NSLock()
 
     /// Create a quaternion smoother
     /// - Parameter smoothingFactor: Value between 0 (no smoothing) and 1 (max smoothing). Default 0.5
@@ -108,9 +96,6 @@ public class QuaternionSmoother: @unchecked Sendable {
     /// - Parameter newQuaternion: The new raw quaternion from the device
     /// - Returns: Smoothed quaternion
     public func update(_ newQuaternion: Quaternion) -> Quaternion {
-        lock.lock()
-        defer { lock.unlock() }
-
         guard let last = lastQuaternion else {
             lastQuaternion = newQuaternion
             targetQuaternion = newQuaternion
@@ -128,41 +113,33 @@ public class QuaternionSmoother: @unchecked Sendable {
 
     /// Reset the smoother
     public func reset() {
-        lock.lock()
-        defer { lock.unlock() }
         lastQuaternion = nil
         targetQuaternion = nil
     }
 
     /// Get the current smoothed quaternion without updating
     public var current: Quaternion? {
-        lock.lock()
-        defer { lock.unlock() }
-        return lastQuaternion
+        lastQuaternion
     }
 }
 
-// MARK: - Home Orientation
+// MARK: - Home Orientation Actor
 
-/// Manages a "home" orientation for relative rotation display
-public class OrientationManager: @unchecked Sendable {
+/// Actor that manages a "home" orientation for relative rotation display
+/// Thread-safe by design using Swift's actor model
+public actor OrientationManager {
     private var homeOrientation: Quaternion?
-    private let lock = NSLock()
 
     public init() {}
 
     /// Set the current orientation as "home" (identity)
     /// - Parameter current: The current orientation to use as home
     public func setHome(_ current: Quaternion) {
-        lock.lock()
-        defer { lock.unlock() }
         homeOrientation = current.inverse
     }
 
     /// Clear the home orientation
     public func clearHome() {
-        lock.lock()
-        defer { lock.unlock() }
         homeOrientation = nil
     }
 
@@ -170,20 +147,14 @@ public class OrientationManager: @unchecked Sendable {
     /// - Parameter current: The current absolute orientation
     /// - Returns: Orientation relative to home, or current if no home set
     public func relativeOrientation(_ current: Quaternion) -> Quaternion {
-        lock.lock()
-        defer { lock.unlock() }
-
         guard let home = homeOrientation else {
             return current
         }
-
         return home * current
     }
 
     /// Check if home is set
     public var hasHome: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return homeOrientation != nil
+        homeOrientation != nil
     }
 }

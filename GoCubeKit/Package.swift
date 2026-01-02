@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -6,8 +6,8 @@ import PackageDescription
 let package = Package(
     name: "GoCubeKit",
     platforms: [
-        .iOS(.v14),
-        .macOS(.v11)
+        .iOS(.v16),
+        .macOS(.v13)
     ],
     products: [
         .library(
@@ -19,12 +19,18 @@ let package = Package(
         .target(
             name: "GoCubeKit",
             dependencies: [],
-            path: "Sources/GoCubeKit"
+            path: "Sources/GoCubeKit",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency")
+            ]
         ),
         .testTarget(
             name: "GoCubeKitTests",
             dependencies: ["GoCubeKit"],
-            path: "Tests/GoCubeKitTests"
+            path: "Tests/GoCubeKitTests",
+            swiftSettings: [
+                .enableExperimentalFeature("StrictConcurrency")
+            ]
         ),
     ]
 )

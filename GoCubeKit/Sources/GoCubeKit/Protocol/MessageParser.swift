@@ -1,16 +1,5 @@
 import Foundation
 
-/// Errors that can occur during message parsing
-public enum MessageParserError: Error, Equatable {
-    case messageTooShort(length: Int)
-    case invalidPrefix(received: UInt8)
-    case invalidSuffix(received: [UInt8])
-    case checksumMismatch(expected: UInt8, received: UInt8)
-    case unknownMessageType(type: UInt8)
-    case payloadLengthMismatch(expected: Int, actual: Int)
-    case invalidPayload(reason: String)
-}
-
 /// Represents a parsed message from the GoCube
 public struct GoCubeMessage: Equatable, Sendable {
     /// The type of message
@@ -37,35 +26,35 @@ public struct MessageParser: Sendable {
     /// Parse a raw data buffer into a GoCube message
     /// - Parameter data: Raw bytes received from BLE notification
     /// - Returns: Parsed message
-    /// - Throws: MessageParserError if parsing fails
+    /// - Throws: GoCubeError.protocol if parsing fails
     public func parse(_ data: Data) throws -> GoCubeMessage {
         let bytes = Array(data)
 
         // Check minimum length
         guard bytes.count >= GoCubeFrame.minimumLength else {
-            throw MessageParserError.messageTooShort(length: bytes.count)
+            throw GoCubeError.parsing(.messageTooShort(length: bytes.count))
         }
 
         // Validate prefix
         guard bytes[0] == GoCubeFrame.prefix else {
-            throw MessageParserError.invalidPrefix(received: bytes[0])
+            throw GoCubeError.parsing(.invalidPrefix(received: bytes[0]))
         }
 
         // Validate suffix
         let suffixStart = bytes.count - 2
         let receivedSuffix = Array(bytes[suffixStart...])
         guard receivedSuffix == GoCubeFrame.suffix else {
-            throw MessageParserError.invalidSuffix(received: receivedSuffix)
+            throw GoCubeError.parsing(.invalidSuffix(received: receivedSuffix))
         }
 
         // Extract length and validate
         let declaredLength = Int(bytes[GoCubeFrame.lengthOffset])
         let expectedTotalLength = 1 + 1 + declaredLength + 1 + 2 // prefix + length + payload(incl type) + checksum + suffix
         guard bytes.count == expectedTotalLength else {
-            throw MessageParserError.payloadLengthMismatch(
+            throw GoCubeError.parsing(.payloadLengthMismatch(
                 expected: expectedTotalLength,
                 actual: bytes.count
-            )
+            ))
         }
 
         // Validate checksum (sum of all bytes before checksum, mod 256)
@@ -73,16 +62,16 @@ public struct MessageParser: Sendable {
         let expectedChecksum = bytes[checksumIndex]
         let calculatedChecksum = calculateChecksum(Array(bytes[0..<checksumIndex]))
         guard expectedChecksum == calculatedChecksum else {
-            throw MessageParserError.checksumMismatch(
+            throw GoCubeError.parsing(.checksumMismatch(
                 expected: calculatedChecksum,
                 received: expectedChecksum
-            )
+            ))
         }
 
         // Extract message type
         let typeRaw = bytes[GoCubeFrame.typeOffset]
         guard let messageType = GoCubeMessageType(rawValue: typeRaw) else {
-            throw MessageParserError.unknownMessageType(type: typeRaw)
+            throw GoCubeError.parsing(.unknownMessageType(type: typeRaw))
         }
 
         // Extract payload (everything between type and checksum)
@@ -128,12 +117,12 @@ public struct MessageParser: Sendable {
     }
 }
 
-// MARK: - Message Buffer
+// MARK: - Message Buffer Actor
 
-/// Accumulates partial BLE messages and extracts complete frames
-public class MessageBuffer: @unchecked Sendable {
+/// Actor that accumulates partial BLE messages and extracts complete frames
+/// Thread-safe by design using Swift's actor model
+public actor MessageBuffer {
     private var buffer: [UInt8] = []
-    private let lock = NSLock()
 
     public init() {}
 
@@ -141,18 +130,18 @@ public class MessageBuffer: @unchecked Sendable {
     /// - Parameter data: New data received from BLE
     /// - Returns: Array of complete raw message data
     public func append(_ data: Data) -> [Data] {
-        lock.lock()
-        defer { lock.unlock() }
-
         buffer.append(contentsOf: data)
         return extractCompleteMessages()
     }
 
     /// Clear the buffer
     public func clear() {
-        lock.lock()
-        defer { lock.unlock() }
         buffer.removeAll()
+    }
+
+    /// Current buffer size (for debugging)
+    public var count: Int {
+        buffer.count
     }
 
     private func extractCompleteMessages() -> [Data] {

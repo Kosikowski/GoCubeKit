@@ -1,28 +1,13 @@
 @preconcurrency import CoreBluetooth
 import Foundation
-import Combine
-
-/// Errors that can occur during BLE communication
-public enum BLEError: Error, Equatable {
-    case bluetoothUnavailable
-    case bluetoothUnauthorized
-    case bluetoothPoweredOff
-    case deviceNotFound
-    case connectionFailed(String)
-    case disconnected
-    case serviceNotFound
-    case characteristicNotFound
-    case writeFailure(String)
-    case notConnected
-    case timeout
-}
+import os.log
 
 /// Represents a discovered GoCube device
 public struct DiscoveredDevice: Identifiable, Equatable, Sendable {
     public let id: UUID
     public let name: String
     public let rssi: Int
-    public let peripheral: CBPeripheral
+    public nonisolated(unsafe) let peripheral: CBPeripheral
 
     public init(peripheral: CBPeripheral, rssi: Int) {
         self.id = peripheral.identifier
@@ -45,87 +30,98 @@ public enum ConnectionState: Equatable, Sendable {
 }
 
 /// Low-level BLE communication handler
-public class BLECommunicator: NSObject, @unchecked Sendable {
+/// Note: This class uses locks for thread safety because CoreBluetooth
+/// callbacks arrive on arbitrary threads. Messages are dispatched to
+/// CubeActor for processing.
+public final class BLECommunicator: NSObject, Sendable {
 
     // MARK: - Properties
 
-    private var centralManager: CBCentralManager!
-    private var connectedPeripheral: CBPeripheral?
-    private var writeCharacteristic: CBCharacteristic?
-    private var notifyCharacteristic: CBCharacteristic?
-
-    private let messageBuffer = MessageBuffer()
+    private let logger = Logger(subsystem: "com.gocubekit", category: "BLE")
     private let messageParser = MessageParser()
+    private let lock = NSLock()
 
-    // MARK: - Publishers
+    // BLE objects (protected by lock, accessed from BLE callbacks)
+    private nonisolated(unsafe) var centralManager: CBCentralManager!
+    private nonisolated(unsafe) var connectedPeripheral: CBPeripheral?
+    private nonisolated(unsafe) var writeCharacteristic: CBCharacteristic?
+    private nonisolated(unsafe) var notifyCharacteristic: CBCharacteristic?
 
-    private let _discoveredDevicesSubject = CurrentValueSubject<[DiscoveredDevice], Never>([])
-    public var discoveredDevicesPublisher: AnyPublisher<[DiscoveredDevice], Never> {
-        _discoveredDevicesSubject.eraseToAnyPublisher()
-    }
+    // State (protected by lock)
+    private nonisolated(unsafe) var _discoveredDevices: [UUID: DiscoveredDevice] = [:]
+    private nonisolated(unsafe) var _connectionState: ConnectionState = .disconnected
+    private nonisolated(unsafe) var _isScanning: Bool = false
+    private nonisolated(unsafe) var _messageBuffer: [UInt8] = []
+    private nonisolated(unsafe) var connectionContinuation: CheckedContinuation<Void, Error>?
 
-    private let _connectionStateSubject = CurrentValueSubject<ConnectionState, Never>(.disconnected)
-    public var connectionStatePublisher: AnyPublisher<ConnectionState, Never> {
-        _connectionStateSubject.eraseToAnyPublisher()
-    }
+    // MARK: - Callbacks
 
-    private let _receivedMessageSubject = PassthroughSubject<GoCubeMessage, Never>()
-    public var receivedMessagePublisher: AnyPublisher<GoCubeMessage, Never> {
-        _receivedMessageSubject.eraseToAnyPublisher()
-    }
+    /// Called on MainActor when devices are discovered
+    public nonisolated(unsafe) var onDevicesDiscovered: (@Sendable @MainActor ([DiscoveredDevice]) -> Void)?
 
-    private let _bluetoothStateSubject = CurrentValueSubject<CBManagerState, Never>(.unknown)
-    public var bluetoothStatePublisher: AnyPublisher<CBManagerState, Never> {
-        _bluetoothStateSubject.eraseToAnyPublisher()
-    }
+    /// Called on MainActor when connection state changes
+    public nonisolated(unsafe) var onConnectionStateChanged: (@Sendable @MainActor (ConnectionState) -> Void)?
 
-    private let _errorSubject = PassthroughSubject<BLEError, Never>()
-    public var errorPublisher: AnyPublisher<BLEError, Never> {
-        _errorSubject.eraseToAnyPublisher()
-    }
+    /// Called on CubeActor when a message is received
+    public nonisolated(unsafe) var onMessageReceived: (@Sendable @CubeActor (GoCubeMessage) -> Void)?
 
-    // MARK: - State
+    /// Called on MainActor when Bluetooth state changes
+    public nonisolated(unsafe) var onBluetoothStateChanged: (@Sendable @MainActor (CBManagerState) -> Void)?
 
-    private var discoveredDevices: [UUID: DiscoveredDevice] = [:]
-    private var connectionContinuation: CheckedContinuation<Void, Error>?
-    private var isScanning = false
+    /// Called on MainActor when an error occurs
+    public nonisolated(unsafe) var onError: (@Sendable @MainActor (GoCubeError) -> Void)?
 
     // MARK: - Initialization
 
     public override init() {
         super.init()
-        centralManager = CBCentralManager(delegate: self, queue: DispatchQueue(label: "com.gocubekit.ble"))
+        centralManager = CBCentralManager(delegate: self, queue: nil)
     }
 
-    // MARK: - Public API
+    // MARK: - Thread-safe accessors
 
-    /// Current Bluetooth state
     public var bluetoothState: CBManagerState {
         centralManager.state
     }
 
-    /// Current connection state
-    public var connectionState: ConnectionState {
-        _connectionStateSubject.value
-    }
-
-    /// Whether Bluetooth is ready for scanning
     public var isBluetoothReady: Bool {
         centralManager.state == .poweredOn
     }
 
-    /// Start scanning for GoCube devices
+    public var connectionState: ConnectionState {
+        lock.lock()
+        defer { lock.unlock() }
+        return _connectionState
+    }
+
+    public var discoveredDevices: [DiscoveredDevice] {
+        lock.lock()
+        defer { lock.unlock() }
+        return Array(_discoveredDevices.values)
+    }
+
+    public var isScanning: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _isScanning
+    }
+
+    // MARK: - Public API
+
     public func startScanning() {
         guard centralManager.state == .poweredOn else {
-            _errorSubject.send(.bluetoothPoweredOff)
+            Task { @MainActor in onError?(.bluetoothPoweredOff) }
             return
         }
 
-        guard !isScanning else { return }
-
-        isScanning = true
-        discoveredDevices.removeAll()
-        _discoveredDevicesSubject.send([])
+        lock.lock()
+        guard !_isScanning else {
+            lock.unlock()
+            return
+        }
+        _isScanning = true
+        _discoveredDevices.removeAll()
+        lock.unlock()
 
         centralManager.scanForPeripherals(
             withServices: [GoCubeBLE.serviceUUID],
@@ -133,56 +129,143 @@ public class BLECommunicator: NSObject, @unchecked Sendable {
         )
     }
 
-    /// Stop scanning for devices
     public func stopScanning() {
-        guard isScanning else { return }
-        isScanning = false
+        lock.lock()
+        guard _isScanning else {
+            lock.unlock()
+            return
+        }
+        _isScanning = false
+        lock.unlock()
+
         centralManager.stopScan()
     }
 
-    /// Connect to a discovered device
     public func connect(to device: DiscoveredDevice) async throws {
         guard centralManager.state == .poweredOn else {
-            throw BLEError.bluetoothPoweredOff
+            throw GoCubeError.bluetoothPoweredOff
         }
 
         stopScanning()
 
-        _connectionStateSubject.send(.connecting)
+        lock.lock()
+        _connectionState = .connecting
+        lock.unlock()
+
+        Task { @MainActor in onConnectionStateChanged?(.connecting) }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            lock.lock()
             self.connectionContinuation = continuation
+            lock.unlock()
             self.centralManager.connect(device.peripheral, options: nil)
         }
     }
 
-    /// Disconnect from the current device
     public func disconnect() {
         guard let peripheral = connectedPeripheral else { return }
 
-        _connectionStateSubject.send(.disconnecting)
+        lock.lock()
+        _connectionState = .disconnecting
+        lock.unlock()
+
+        Task { @MainActor in onConnectionStateChanged?(.disconnecting) }
         centralManager.cancelPeripheralConnection(peripheral)
     }
 
-    /// Send a command to the connected cube
     public func sendCommand(_ command: GoCubeCommand) throws {
-        let data = messageParser.buildCommandFrame(command)
-        try write(data: data)
+        try write(data: messageParser.buildCommandFrame(command))
     }
 
-    /// Write raw data to the cube
     public func write(data: Data) throws {
         guard let peripheral = connectedPeripheral,
               let characteristic = writeCharacteristic else {
-            throw BLEError.notConnected
+            throw GoCubeError.notConnected
         }
-
         peripheral.writeValue(data, for: characteristic, type: .withoutResponse)
     }
 
-    /// Clear the message buffer
     public func clearBuffer() {
-        messageBuffer.clear()
+        lock.lock()
+        _messageBuffer.removeAll()
+        lock.unlock()
+    }
+
+    // MARK: - Message Buffer (called from BLE callback thread)
+
+    private func appendToBuffer(_ data: Data) {
+        lock.lock()
+        _messageBuffer.append(contentsOf: data)
+
+        // Extract and process messages while holding lock
+        while let messageData = extractOneMessageLocked() {
+            lock.unlock()
+            do {
+                let message = try messageParser.parse(messageData)
+                Task { @CubeActor in self.onMessageReceived?(message) }
+            } catch {
+                logger.error("Failed to parse message: \(error.localizedDescription)")
+            }
+            lock.lock()
+        }
+        lock.unlock()
+    }
+
+    /// Must be called with lock held
+    private func extractOneMessageLocked() -> Data? {
+        guard let startIndex = _messageBuffer.firstIndex(of: GoCubeFrame.prefix) else {
+            _messageBuffer.removeAll()
+            return nil
+        }
+
+        if startIndex > 0 {
+            _messageBuffer.removeFirst(startIndex)
+        }
+
+        guard _messageBuffer.count >= GoCubeFrame.minimumLength else {
+            return nil
+        }
+
+        let declaredLength = Int(_messageBuffer[GoCubeFrame.lengthOffset])
+        let expectedTotalLength = 1 + 1 + declaredLength + 1 + 2
+
+        guard _messageBuffer.count >= expectedTotalLength else {
+            return nil
+        }
+
+        let suffixStart = expectedTotalLength - 2
+        guard _messageBuffer[suffixStart] == GoCubeFrame.suffix[0] &&
+              _messageBuffer[suffixStart + 1] == GoCubeFrame.suffix[1] else {
+            _messageBuffer.removeFirst()
+            return extractOneMessageLocked()
+        }
+
+        let messageBytes = Array(_messageBuffer.prefix(expectedTotalLength))
+        _messageBuffer.removeFirst(expectedTotalLength)
+        return Data(messageBytes)
+    }
+
+    // MARK: - State updates (called from BLE callbacks)
+
+    private func setConnectionState(_ state: ConnectionState) {
+        lock.lock()
+        _connectionState = state
+        lock.unlock()
+        Task { @MainActor in onConnectionStateChanged?(state) }
+    }
+
+    private func resumeContinuation(with result: Result<Void, Error>) {
+        lock.lock()
+        let continuation = connectionContinuation
+        connectionContinuation = nil
+        lock.unlock()
+
+        switch result {
+        case .success:
+            continuation?.resume()
+        case .failure(let error):
+            continuation?.resume(throwing: error)
+        }
     }
 }
 
@@ -191,16 +274,16 @@ public class BLECommunicator: NSObject, @unchecked Sendable {
 extension BLECommunicator: CBCentralManagerDelegate {
 
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        _bluetoothStateSubject.send(central.state)
+        Task { @MainActor in onBluetoothStateChanged?(central.state) }
 
         switch central.state {
         case .poweredOff:
-            _connectionStateSubject.send(.disconnected)
-            _errorSubject.send(.bluetoothPoweredOff)
+            setConnectionState(.disconnected)
+            Task { @MainActor in onError?(.bluetoothPoweredOff) }
         case .unauthorized:
-            _errorSubject.send(.bluetoothUnauthorized)
+            Task { @MainActor in onError?(.bluetoothUnauthorized) }
         case .unsupported:
-            _errorSubject.send(.bluetoothUnavailable)
+            Task { @MainActor in onError?(.bluetoothUnavailable) }
         default:
             break
         }
@@ -213,8 +296,13 @@ extension BLECommunicator: CBCentralManagerDelegate {
         rssi RSSI: NSNumber
     ) {
         let device = DiscoveredDevice(peripheral: peripheral, rssi: RSSI.intValue)
-        discoveredDevices[peripheral.identifier] = device
-        _discoveredDevicesSubject.send(Array(discoveredDevices.values))
+
+        lock.lock()
+        _discoveredDevices[device.id] = device
+        let devices = Array(_discoveredDevices.values)
+        lock.unlock()
+
+        Task { @MainActor in onDevicesDiscovered?(devices) }
     }
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
@@ -228,9 +316,8 @@ extension BLECommunicator: CBCentralManagerDelegate {
         didFailToConnect peripheral: CBPeripheral,
         error: Error?
     ) {
-        _connectionStateSubject.send(.disconnected)
-        connectionContinuation?.resume(throwing: BLEError.connectionFailed(error?.localizedDescription ?? "Unknown error"))
-        connectionContinuation = nil
+        setConnectionState(.disconnected)
+        resumeContinuation(with: .failure(GoCubeError.connectionFailed(error?.localizedDescription ?? "Unknown")))
     }
 
     public func centralManager(
@@ -241,11 +328,14 @@ extension BLECommunicator: CBCentralManagerDelegate {
         connectedPeripheral = nil
         writeCharacteristic = nil
         notifyCharacteristic = nil
-        _connectionStateSubject.send(.disconnected)
+        setConnectionState(.disconnected)
 
-        if connectionContinuation != nil {
-            connectionContinuation?.resume(throwing: BLEError.disconnected)
-            connectionContinuation = nil
+        lock.lock()
+        let hasContinuation = connectionContinuation != nil
+        lock.unlock()
+
+        if hasContinuation {
+            resumeContinuation(with: .failure(GoCubeError.connection(.disconnected)))
         }
     }
 }
@@ -256,14 +346,12 @@ extension BLECommunicator: CBPeripheralDelegate {
 
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error = error {
-            connectionContinuation?.resume(throwing: BLEError.connectionFailed(error.localizedDescription))
-            connectionContinuation = nil
+            resumeContinuation(with: .failure(GoCubeError.connectionFailed(error.localizedDescription)))
             return
         }
 
         guard let service = peripheral.services?.first(where: { $0.uuid == GoCubeBLE.serviceUUID }) else {
-            connectionContinuation?.resume(throwing: BLEError.serviceNotFound)
-            connectionContinuation = nil
+            resumeContinuation(with: .failure(GoCubeError.connection(.serviceNotFound)))
             return
         }
 
@@ -279,14 +367,12 @@ extension BLECommunicator: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error = error {
-            connectionContinuation?.resume(throwing: BLEError.connectionFailed(error.localizedDescription))
-            connectionContinuation = nil
+            resumeContinuation(with: .failure(GoCubeError.connectionFailed(error.localizedDescription)))
             return
         }
 
         guard let characteristics = service.characteristics else {
-            connectionContinuation?.resume(throwing: BLEError.characteristicNotFound)
-            connectionContinuation = nil
+            resumeContinuation(with: .failure(GoCubeError.connection(.characteristicNotFound)))
             return
         }
 
@@ -299,17 +385,13 @@ extension BLECommunicator: CBPeripheralDelegate {
             }
         }
 
-        // Verify we found both characteristics
         guard writeCharacteristic != nil && notifyCharacteristic != nil else {
-            connectionContinuation?.resume(throwing: BLEError.characteristicNotFound)
-            connectionContinuation = nil
+            resumeContinuation(with: .failure(GoCubeError.connection(.characteristicNotFound)))
             return
         }
 
-        // Connection complete
-        _connectionStateSubject.send(.connected)
-        connectionContinuation?.resume()
-        connectionContinuation = nil
+        setConnectionState(.connected)
+        resumeContinuation(with: .success(()))
     }
 
     public func peripheral(
@@ -319,22 +401,9 @@ extension BLECommunicator: CBPeripheralDelegate {
     ) {
         guard error == nil,
               characteristic.uuid == GoCubeBLE.notifyCharacteristicUUID,
-              let data = characteristic.value else {
-            return
-        }
+              let data = characteristic.value else { return }
 
-        // Add to buffer and process complete messages
-        let completeMessages = messageBuffer.append(data)
-
-        for messageData in completeMessages {
-            do {
-                let message = try messageParser.parse(messageData)
-                _receivedMessageSubject.send(message)
-            } catch {
-                // Log parsing errors but don't crash
-                print("GoCubeKit: Failed to parse message: \(error)")
-            }
-        }
+        appendToBuffer(data)
     }
 
     public func peripheral(
@@ -343,7 +412,7 @@ extension BLECommunicator: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error = error {
-            print("GoCubeKit: Notification state error: \(error)")
+            logger.error("Notification state error: \(error.localizedDescription)")
         }
     }
 }

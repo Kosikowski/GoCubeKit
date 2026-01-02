@@ -1,12 +1,5 @@
 import Foundation
 
-/// Errors that can occur during move decoding
-public enum MoveDecoderError: Error, Equatable {
-    case emptyPayload
-    case invalidMoveCode(code: UInt8)
-    case oddPayloadLength(length: Int)
-}
-
 /// Decodes move messages from the GoCube protocol
 public struct MoveDecoder: Sendable {
 
@@ -15,17 +8,17 @@ public struct MoveDecoder: Sendable {
     /// Decode a move message payload into an array of moves
     /// - Parameter payload: Raw payload bytes from a rotation message (type 0x01)
     /// - Returns: Array of decoded moves
-    /// - Throws: MoveDecoderError if decoding fails
+    /// - Throws: GoCubeError.parsing if decoding fails
     public func decode(_ payload: Data) throws -> [Move] {
         let bytes = Array(payload)
 
         guard !bytes.isEmpty else {
-            throw MoveDecoderError.emptyPayload
+            throw GoCubeError.parsing(.emptyMovePayload)
         }
 
         // Each move is encoded as 2 bytes
         guard bytes.count % 2 == 0 else {
-            throw MoveDecoderError.oddPayloadLength(length: bytes.count)
+            throw GoCubeError.parsing(.oddMovePayloadLength(length: bytes.count))
         }
 
         var moves: [Move] = []
@@ -46,10 +39,10 @@ public struct MoveDecoder: Sendable {
     ///   - code: Move code (0x00-0x0B)
     ///   - centerOrientation: Center piece orientation (0x00, 0x03, 0x06, 0x09)
     /// - Returns: Decoded move
-    /// - Throws: MoveDecoderError if the code is invalid
+    /// - Throws: GoCubeError.parsing if the code is invalid
     public func decodeMove(code: UInt8, centerOrientation: UInt8) throws -> Move {
         guard code <= 0x0B else {
-            throw MoveDecoderError.invalidMoveCode(code: code)
+            throw GoCubeError.parsing(.invalidMoveCode(code: code))
         }
 
         // Face mapping: BFUDRL
@@ -58,47 +51,22 @@ public struct MoveDecoder: Sendable {
         let faceIndex = Int(code >> 1)
         let isCounterClockwise = (code & 1) == 1
 
-        let face = faceFromProtocolIndex(faceIndex)
+        let face = GoCubeProtocol.faceFromProtocolIndex(faceIndex)
         let direction: MoveDirection = isCounterClockwise ? .counterclockwise : .clockwise
 
         return Move(face: face, direction: direction, centerOrientation: centerOrientation)
-    }
-
-    /// Convert protocol face index to CubeFace
-    /// Protocol order: Back(0), Front(1), Up(2), Down(3), Right(4), Left(5)
-    private func faceFromProtocolIndex(_ index: Int) -> CubeFace {
-        switch index {
-        case 0: return .back
-        case 1: return .front
-        case 2: return .up
-        case 3: return .down
-        case 4: return .right
-        case 5: return .left
-        default: return .front // Should never happen due to validation
-        }
     }
 
     /// Encode a move back to protocol bytes
     /// - Parameter move: The move to encode
     /// - Returns: 2-byte encoding of the move
     public func encode(_ move: Move) -> [UInt8] {
-        let faceCode = protocolIndexFromFace(move.face)
+        let faceCode = GoCubeProtocol.protocolIndexFromFace(move.face)
         let directionBit: UInt8 = move.direction == .counterclockwise ? 1 : 0
         let moveCode = UInt8(faceCode << 1) | directionBit
         let centerOrientation = move.centerOrientation ?? 0
 
         return [moveCode, centerOrientation]
-    }
-
-    private func protocolIndexFromFace(_ face: CubeFace) -> Int {
-        switch face {
-        case .back: return 0
-        case .front: return 1
-        case .up: return 2
-        case .down: return 3
-        case .right: return 4
-        case .left: return 5
-        }
     }
 }
 
@@ -106,7 +74,7 @@ public struct MoveDecoder: Sendable {
 
 extension MoveDecoder {
     /// All valid move codes and their meanings
-    public enum MoveCode: UInt8, CaseIterable {
+    public enum MoveCode: UInt8, CaseIterable, Sendable {
         case backClockwise = 0x00
         case backCounterClockwise = 0x01
         case frontClockwise = 0x02

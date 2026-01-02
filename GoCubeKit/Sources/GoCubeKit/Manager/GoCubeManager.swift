@@ -1,95 +1,140 @@
 import Foundation
-import Combine
-import CoreBluetooth
+@preconcurrency import CoreBluetooth
+import os.log
 
 /// Delegate protocol for GoCubeManager events
-public protocol GoCubeManagerDelegate: AnyObject {
+public protocol GoCubeManagerDelegate: AnyObject, Sendable {
     /// Called when the list of discovered devices is updated
-    func goCubeManager(_ manager: GoCubeManager, didDiscoverDevices devices: [DiscoveredDevice])
+    @MainActor func goCubeManager(_ manager: GoCubeManager, didDiscoverDevices devices: [DiscoveredDevice])
 
     /// Called when a cube is successfully connected
-    func goCubeManager(_ manager: GoCubeManager, didConnect cube: GoCube)
+    @MainActor func goCubeManager(_ manager: GoCubeManager, didConnect cube: GoCube)
 
     /// Called when connection fails
-    func goCubeManager(_ manager: GoCubeManager, didFailToConnect error: GoCubeError)
+    @MainActor func goCubeManager(_ manager: GoCubeManager, didFailToConnect error: GoCubeError)
 
     /// Called when Bluetooth state changes
-    func goCubeManager(_ manager: GoCubeManager, didUpdateBluetoothState state: CBManagerState)
+    @MainActor func goCubeManager(_ manager: GoCubeManager, didUpdateBluetoothState state: CBManagerState)
 }
 
 // MARK: - Default Implementations
 
 public extension GoCubeManagerDelegate {
-    func goCubeManager(_ manager: GoCubeManager, didDiscoverDevices devices: [DiscoveredDevice]) {}
-    func goCubeManager(_ manager: GoCubeManager, didConnect cube: GoCube) {}
-    func goCubeManager(_ manager: GoCubeManager, didFailToConnect error: GoCubeError) {}
-    func goCubeManager(_ manager: GoCubeManager, didUpdateBluetoothState state: CBManagerState) {}
+    @MainActor func goCubeManager(_ manager: GoCubeManager, didDiscoverDevices devices: [DiscoveredDevice]) {}
+    @MainActor func goCubeManager(_ manager: GoCubeManager, didConnect cube: GoCube) {}
+    @MainActor func goCubeManager(_ manager: GoCubeManager, didFailToConnect error: GoCubeError) {}
+    @MainActor func goCubeManager(_ manager: GoCubeManager, didUpdateBluetoothState state: CBManagerState) {}
+}
+
+/// Actor that manages GoCube state for thread-safe access
+public actor GoCubeManagerState {
+    private(set) var connectedCube: GoCube?
+    private(set) var isScanning: Bool = false
+    private(set) var isConnected: Bool = false
+
+    func setConnectedCube(_ cube: GoCube?) {
+        connectedCube = cube
+        isConnected = cube != nil
+    }
+
+    func setScanning(_ value: Bool) {
+        isScanning = value
+    }
 }
 
 /// Manager for discovering and connecting to GoCube devices
-public class GoCubeManager: @unchecked Sendable {
+public final class GoCubeManager: Sendable {
 
-    // MARK: - Singleton
+    // MARK: - Shared Instance (optional convenience)
 
-    /// Shared instance of GoCubeManager
+    /// Shared instance of GoCubeManager for convenience
+    /// Note: You can create your own instances for testing or multiple cube support
     public static let shared = GoCubeManager()
 
     // MARK: - Properties
 
-    /// Delegate for receiving events
-    public weak var delegate: GoCubeManagerDelegate?
+    private let logger = Logger(subsystem: "com.gocubekit", category: "Manager")
 
     /// The BLE communicator
-    private let communicator = BLECommunicator()
+    private let communicator: BLECommunicator
 
-    /// Currently connected cube
-    private(set) var connectedCube: GoCube?
+    /// Configuration
+    public let configuration: GoCubeConfiguration
 
-    /// Cancellables for Combine subscriptions
-    private var cancellables = Set<AnyCancellable>()
+    /// State actor for thread-safe state management
+    private let state = GoCubeManagerState()
 
-    // MARK: - Publishers
+    /// Delegate for receiving events
+    public nonisolated(unsafe) weak var delegate: GoCubeManagerDelegate?
 
-    private let _discoveredDevicesSubject = CurrentValueSubject<[DiscoveredDevice], Never>([])
-    /// Publisher for discovered devices
-    public var discoveredDevicesPublisher: AnyPublisher<[DiscoveredDevice], Never> {
-        _discoveredDevicesSubject.eraseToAnyPublisher()
+    // MARK: - Callbacks (alternative to delegate)
+
+    /// Callback when devices are discovered
+    public nonisolated(unsafe) var onDevicesDiscovered: (@Sendable @MainActor ([DiscoveredDevice]) -> Void)?
+
+    /// Callback when connected
+    public nonisolated(unsafe) var onConnected: (@Sendable @MainActor (GoCube) -> Void)?
+
+    /// Callback when connection fails
+    public nonisolated(unsafe) var onConnectionFailed: (@Sendable @MainActor (GoCubeError) -> Void)?
+
+    /// Callback when Bluetooth state changes
+    public nonisolated(unsafe) var onBluetoothStateChanged: (@Sendable @MainActor (CBManagerState) -> Void)?
+
+    // MARK: - Initialization
+
+    /// Create a GoCubeManager with default communicator and configuration
+    public convenience init() {
+        self.init(communicator: BLECommunicator(), configuration: .default)
     }
 
-    private let _connectedCubeSubject = CurrentValueSubject<GoCube?, Never>(nil)
-    /// Publisher for connected cube
-    public var connectedCubePublisher: AnyPublisher<GoCube?, Never> {
-        _connectedCubeSubject.eraseToAnyPublisher()
+    /// Create a GoCubeManager with custom configuration
+    public convenience init(configuration: GoCubeConfiguration) {
+        self.init(communicator: BLECommunicator(), configuration: configuration)
     }
 
-    private let _bluetoothStateSubject = CurrentValueSubject<CBManagerState, Never>(.unknown)
-    /// Publisher for Bluetooth state
-    public var bluetoothStatePublisher: AnyPublisher<CBManagerState, Never> {
-        _bluetoothStateSubject.eraseToAnyPublisher()
+    /// Create a GoCubeManager with custom communicator and configuration (for testing)
+    public init(communicator: BLECommunicator, configuration: GoCubeConfiguration = .default) {
+        self.communicator = communicator
+        self.configuration = configuration
+        setupCallbacks()
     }
 
-    private let _isConnectedSubject = CurrentValueSubject<Bool, Never>(false)
-    /// Publisher for connection state
-    public var isConnectedPublisher: AnyPublisher<Bool, Never> {
-        _isConnectedSubject.eraseToAnyPublisher()
+    private func setupCallbacks() {
+        // Forward discovered devices
+        communicator.onDevicesDiscovered = { [weak self] devices in
+            guard let self = self else { return }
+            Task { @MainActor in
+                self.delegate?.goCubeManager(self, didDiscoverDevices: devices)
+                self.onDevicesDiscovered?(devices)
+            }
+        }
+
+        // Forward Bluetooth state
+        communicator.onBluetoothStateChanged = { [weak self] state in
+            guard let self = self else { return }
+            Task { @MainActor in
+                self.delegate?.goCubeManager(self, didUpdateBluetoothState: state)
+                self.onBluetoothStateChanged?(state)
+            }
+        }
+
+        // Track connection state
+        communicator.onConnectionStateChanged = { [weak self] connectionState in
+            guard let self = self else { return }
+            Task {
+                if connectionState == .disconnected {
+                    await self.state.setConnectedCube(nil)
+                }
+            }
+        }
     }
 
-    private let _isScanningSubject = CurrentValueSubject<Bool, Never>(false)
-    /// Publisher for scanning state
-    public var isScanningPublisher: AnyPublisher<Bool, Never> {
-        _isScanningSubject.eraseToAnyPublisher()
-    }
-
-    // MARK: - State
-
-    /// Current list of discovered devices
-    public var discoveredDevices: [DiscoveredDevice] {
-        _discoveredDevicesSubject.value
-    }
+    // MARK: - Public API
 
     /// Current Bluetooth state
     public var bluetoothState: CBManagerState {
-        _bluetoothStateSubject.value
+        communicator.bluetoothState
     }
 
     /// Whether Bluetooth is ready for use
@@ -97,76 +142,38 @@ public class GoCubeManager: @unchecked Sendable {
         communicator.isBluetoothReady
     }
 
+    /// Get discovered devices
+    public func getDiscoveredDevices() async -> [DiscoveredDevice] {
+        await communicator.getDiscoveredDevices()
+    }
+
+    /// Get the currently connected cube
+    public func getConnectedCube() async -> GoCube? {
+        await state.connectedCube
+    }
+
     /// Whether currently scanning
-    public var isScanning: Bool {
-        _isScanningSubject.value
+    public func isScanning() async -> Bool {
+        await state.isScanning
     }
 
     /// Whether connected to a cube
-    public var isConnected: Bool {
-        _isConnectedSubject.value
-    }
-
-    // MARK: - Initialization
-
-    private init() {
-        setupSubscriptions()
-    }
-
-    /// Create a custom instance (for testing or advanced use cases)
-    public init(communicator: BLECommunicator) {
-        setupSubscriptions()
-    }
-
-    private func setupSubscriptions() {
-        // Forward discovered devices
-        communicator.discoveredDevicesPublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] devices in
-                guard let self = self else { return }
-                self._discoveredDevicesSubject.send(devices)
-                self.delegate?.goCubeManager(self, didDiscoverDevices: devices)
-            }
-            .store(in: &cancellables)
-
-        // Forward Bluetooth state
-        communicator.bluetoothStatePublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] state in
-                guard let self = self else { return }
-                self._bluetoothStateSubject.send(state)
-                self.delegate?.goCubeManager(self, didUpdateBluetoothState: state)
-            }
-            .store(in: &cancellables)
-
-        // Track connection state
-        communicator.connectionStatePublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] state in
-                guard let self = self else { return }
-                let isConnected = state == .connected
-                self._isConnectedSubject.send(isConnected)
-
-                if state == .disconnected {
-                    self.connectedCube = nil
-                    self._connectedCubeSubject.send(nil)
-                }
-            }
-            .store(in: &cancellables)
+    public func isConnected() async -> Bool {
+        await state.isConnected
     }
 
     // MARK: - Scanning
 
     /// Start scanning for GoCube devices
-    public func startScanning() {
-        _isScanningSubject.send(true)
-        communicator.startScanning()
+    public func startScanning() async {
+        await state.setScanning(true)
+        await communicator.startScanning()
     }
 
     /// Stop scanning for devices
-    public func stopScanning() {
-        _isScanningSubject.send(false)
-        communicator.stopScanning()
+    public func stopScanning() async {
+        await state.setScanning(false)
+        await communicator.stopScanning()
     }
 
     // MARK: - Connection
@@ -179,72 +186,68 @@ public class GoCubeManager: @unchecked Sendable {
         do {
             try await communicator.connect(to: device)
 
-            let cube = GoCube(device: device, communicator: communicator)
-            connectedCube = cube
-            _connectedCubeSubject.send(cube)
+            let cube = GoCube(device: device, communicator: communicator, configuration: configuration)
+            await state.setConnectedCube(cube)
 
             // Request initial state
             try? cube.requestState()
             try? cube.requestBattery()
             try? cube.requestCubeType()
 
-            delegate?.goCubeManager(self, didConnect: cube)
-            cube.delegate?.goCubeDidConnect(cube)
+            Task { @MainActor in
+                self.delegate?.goCubeManager(self, didConnect: cube)
+                self.onConnected?(cube)
+                cube.delegate?.goCubeDidConnect(cube)
+            }
 
             return cube
-        } catch let error as BLEError {
-            let goCubeError = mapBLEError(error)
-            delegate?.goCubeManager(self, didFailToConnect: goCubeError)
-            throw goCubeError
+        } catch let error as GoCubeError {
+            Task { @MainActor in
+                self.delegate?.goCubeManager(self, didFailToConnect: error)
+                self.onConnectionFailed?(error)
+            }
+            throw error
         } catch {
             let goCubeError = GoCubeError.connectionFailed(error.localizedDescription)
-            delegate?.goCubeManager(self, didFailToConnect: goCubeError)
+            Task { @MainActor in
+                self.delegate?.goCubeManager(self, didFailToConnect: goCubeError)
+                self.onConnectionFailed?(goCubeError)
+            }
             throw goCubeError
         }
     }
 
     /// Disconnect from the current cube
-    public func disconnect() {
-        communicator.disconnect()
-        connectedCube = nil
-        _connectedCubeSubject.send(nil)
+    public func disconnect() async {
+        await communicator.disconnect()
+        await state.setConnectedCube(nil)
     }
 
     /// Connect to the first available GoCube
-    /// - Parameter timeout: How long to scan before giving up
+    /// Uses configuration.scanTimeout for timeout duration
     /// - Returns: The connected GoCube instance
     @discardableResult
-    public func connectToFirstAvailable(timeout: TimeInterval = 10) async throws -> GoCube {
-        startScanning()
+    public func connectToFirstAvailable() async throws -> GoCube {
+        await startScanning()
 
         // Wait for a device to be discovered with timeout
-        let device = try await withThrowingTaskGroup(of: DiscoveredDevice.self) { group in
+        // Uses Task.sleep with proper cancellation handling to avoid race conditions
+        let device: DiscoveredDevice = try await withThrowingTaskGroup(of: DiscoveredDevice.self) { group in
             // Task to wait for device discovery
             group.addTask {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<DiscoveredDevice, Error>) in
-                    var cancellable: AnyCancellable?
-                    var hasResumed = false
-
-                    cancellable = self.discoveredDevicesPublisher
-                        .filter { !$0.isEmpty }
-                        .first()
-                        .sink(
-                            receiveCompletion: { _ in
-                                cancellable?.cancel()
-                            },
-                            receiveValue: { devices in
-                                guard !hasResumed, let device = devices.first else { return }
-                                hasResumed = true
-                                continuation.resume(returning: device)
-                                cancellable?.cancel()
-                            }
-                        )
+                while true {
+                    let devices = await self.communicator.getDiscoveredDevices()
+                    if let device = devices.first {
+                        return device
+                    }
+                    // Check periodically
+                    try await Task.sleep(for: .milliseconds(100))
                 }
             }
 
             // Task for timeout
             group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                try await Task.sleep(for: self.configuration.scanTimeout)
                 throw GoCubeError.timeout
             }
 
@@ -256,30 +259,7 @@ public class GoCubeManager: @unchecked Sendable {
             return result
         }
 
-        stopScanning()
+        await stopScanning()
         return try await connect(to: device)
-    }
-
-    // MARK: - Helpers
-
-    private func mapBLEError(_ error: BLEError) -> GoCubeError {
-        switch error {
-        case .bluetoothUnavailable:
-            return .bluetoothUnavailable
-        case .bluetoothUnauthorized:
-            return .bluetoothUnauthorized
-        case .bluetoothPoweredOff:
-            return .bluetoothPoweredOff
-        case .connectionFailed(let reason):
-            return .connectionFailed(reason)
-        case .disconnected:
-            return .notConnected
-        case .notConnected:
-            return .notConnected
-        case .timeout:
-            return .timeout
-        default:
-            return .communicationError(String(describing: error))
-        }
     }
 }

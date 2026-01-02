@@ -1,19 +1,19 @@
-import CoreBluetooth
+@preconcurrency import CoreBluetooth
 import Foundation
 
 /// BLE Service and Characteristic UUIDs for GoCube communication
-public enum GoCubeBLE {
+public enum GoCubeBLE: Sendable {
     /// The primary GATT service UUID for GoCube devices
     /// This is a Nordic UART-like service
-    public static let serviceUUID = CBUUID(string: "6e400001-b5a3-f393-e0a9-e50e24dcca9e")
+    public nonisolated(unsafe) static let serviceUUID = CBUUID(string: "6e400001-b5a3-f393-e0a9-e50e24dcca9e")
 
     /// Write characteristic UUID (RX from cube's perspective)
     /// Used to send commands TO the cube
-    public static let writeCharacteristicUUID = CBUUID(string: "6e400002-b5a3-f393-e0a9-e50e24dcca9e")
+    public nonisolated(unsafe) static let writeCharacteristicUUID = CBUUID(string: "6e400002-b5a3-f393-e0a9-e50e24dcca9e")
 
     /// Notify characteristic UUID (TX from cube's perspective)
     /// Used to receive data FROM the cube via notifications
-    public static let notifyCharacteristicUUID = CBUUID(string: "6e400003-b5a3-f393-e0a9-e50e24dcca9e")
+    public nonisolated(unsafe) static let notifyCharacteristicUUID = CBUUID(string: "6e400003-b5a3-f393-e0a9-e50e24dcca9e")
 
     /// Device name prefix used for filtering during BLE scanning
     public static let deviceNamePrefix = "GoCube"
@@ -123,5 +123,38 @@ public enum GoCubeType: UInt8, Equatable, Sendable {
         case 0x01: self = .edge
         default: self = .unknown
         }
+    }
+}
+
+// MARK: - Protocol Mappings
+
+/// Centralized protocol constants for face/color ordering
+public enum GoCubeProtocol {
+    /// Protocol face order: Back(0), Front(1), Up(2), Down(3), Right(4), Left(5)
+    public static let faceOrder: [CubeFace] = [.back, .front, .up, .down, .right, .left]
+
+    /// Protocol color order: Blue(0), Green(1), White(2), Yellow(3), Red(4), Orange(5)
+    public static let colorOrder: [CubeColor] = [.blue, .green, .white, .yellow, .red, .orange]
+
+    /// Convert protocol face index to CubeFace
+    public static func faceFromProtocolIndex(_ index: Int) -> CubeFace {
+        guard index >= 0 && index < faceOrder.count else { return .front }
+        return faceOrder[index]
+    }
+
+    /// Convert CubeFace to protocol index
+    public static func protocolIndexFromFace(_ face: CubeFace) -> Int {
+        faceOrder.firstIndex(of: face) ?? 0
+    }
+
+    /// Convert protocol color value to CubeColor
+    public static func colorFromProtocolValue(_ value: UInt8) -> CubeColor? {
+        guard value < colorOrder.count else { return nil }
+        return colorOrder[Int(value)]
+    }
+
+    /// Convert CubeColor to protocol value
+    public static func protocolValueFromColor(_ color: CubeColor) -> UInt8 {
+        UInt8(colorOrder.firstIndex(of: color) ?? 0)
     }
 }

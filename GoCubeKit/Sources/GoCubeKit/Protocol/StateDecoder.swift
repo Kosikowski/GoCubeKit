@@ -1,12 +1,5 @@
 import Foundation
 
-/// Errors that can occur during cube state decoding
-public enum StateDecoderError: Error, Equatable {
-    case invalidPayloadLength(expected: Int, actual: Int)
-    case invalidColorValue(value: UInt8, position: Int)
-    case invalidOrientationValue(value: UInt8, face: Int)
-}
-
 /// Decodes cube state messages from the GoCube protocol
 public struct StateDecoder: Sendable {
 
@@ -25,15 +18,15 @@ public struct StateDecoder: Sendable {
     /// Decode a cube state message payload
     /// - Parameter payload: Raw payload bytes from a state message (type 0x02)
     /// - Returns: Decoded cube state
-    /// - Throws: StateDecoderError if decoding fails
+    /// - Throws: GoCubeError.parsing if decoding fails
     public func decode(_ payload: Data) throws -> CubeState {
         let bytes = Array(payload)
 
         guard bytes.count == Self.expectedPayloadLength else {
-            throw StateDecoderError.invalidPayloadLength(
+            throw GoCubeError.parsing(.payloadLengthMismatch(
                 expected: Self.expectedPayloadLength,
                 actual: bytes.count
-            )
+            ))
         }
 
         // Parse 6 faces, 9 stickers each (54 bytes)
@@ -47,11 +40,11 @@ public struct StateDecoder: Sendable {
                 let byteIndex = startIndex + stickerIndex
                 let colorValue = bytes[byteIndex]
 
-                guard let color = CubeColor(protocolValue: colorValue) else {
-                    throw StateDecoderError.invalidColorValue(
+                guard let color = GoCubeProtocol.colorFromProtocolValue(colorValue) else {
+                    throw GoCubeError.parsing(.invalidColorValue(
                         value: colorValue,
                         position: byteIndex
-                    )
+                    ))
                 }
 
                 faceColors.append(color)
@@ -81,7 +74,7 @@ public struct StateDecoder: Sendable {
         // Encode 54 facelets
         for face in state.facelets {
             for color in face {
-                bytes.append(color.rawValue)
+                bytes.append(GoCubeProtocol.protocolValueFromColor(color))
             }
         }
 
