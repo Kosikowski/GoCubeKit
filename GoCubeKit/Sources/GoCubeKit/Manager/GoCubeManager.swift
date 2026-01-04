@@ -26,24 +26,10 @@ public extension GoCubeManagerDelegate {
     @MainActor func goCubeManager(_ manager: GoCubeManager, didUpdateBluetoothState state: CBManagerState) {}
 }
 
-/// Actor that manages GoCube state for thread-safe access
-public actor GoCubeManagerState {
-    private(set) var connectedCube: GoCube?
-    private(set) var isScanning: Bool = false
-    private(set) var isConnected: Bool = false
-
-    func setConnectedCube(_ cube: GoCube?) {
-        connectedCube = cube
-        isConnected = cube != nil
-    }
-
-    func setScanning(_ value: Bool) {
-        isScanning = value
-    }
-}
-
 /// Manager for discovering and connecting to GoCube devices
-public final class GoCubeManager: Sendable {
+/// Isolated to CubeActor for thread-safe state management
+@CubeActor
+public final class GoCubeManager {
 
     // MARK: - Shared Instance (optional convenience)
 
@@ -59,10 +45,15 @@ public final class GoCubeManager: Sendable {
     private let communicator: BLECommunicator
 
     /// Configuration
-    public let configuration: GoCubeConfiguration
+    public nonisolated let configuration: GoCubeConfiguration
 
-    /// State actor for thread-safe state management
-    private let state = GoCubeManagerState()
+    // MARK: - State (protected by CubeActor isolation)
+
+    /// Currently connected cube
+    public private(set) var connectedCube: GoCube?
+
+    /// Whether currently scanning for devices
+    public private(set) var isScanning: Bool = false
 
     /// Delegate for receiving events
     public nonisolated(unsafe) weak var delegate: GoCubeManagerDelegate?
@@ -97,10 +88,10 @@ public final class GoCubeManager: Sendable {
     public init(communicator: BLECommunicator, configuration: GoCubeConfiguration = .default) {
         self.communicator = communicator
         self.configuration = configuration
-        setupCallbacks()
     }
 
-    private func setupCallbacks() {
+    /// Setup callbacks after initialization (must be called separately due to actor isolation)
+    public func setupCallbacks() {
         // Forward discovered devices
         communicator.onDevicesDiscovered = { [weak self] devices in
             guard let self = self else { return }
@@ -122,58 +113,52 @@ public final class GoCubeManager: Sendable {
         // Track connection state
         communicator.onConnectionStateChanged = { [weak self] connectionState in
             guard let self = self else { return }
-            Task {
-                if connectionState == .disconnected {
-                    await self.state.setConnectedCube(nil)
+            if connectionState == .disconnected {
+                Task {
+                    await self.clearConnectedCube()
                 }
             }
         }
     }
 
+    private func clearConnectedCube() {
+        connectedCube = nil
+    }
+
     // MARK: - Public API
 
     /// Current Bluetooth state
-    public var bluetoothState: CBManagerState {
+    public nonisolated var bluetoothState: CBManagerState {
         communicator.bluetoothState
     }
 
     /// Whether Bluetooth is ready for use
-    public var isBluetoothReady: Bool {
+    public nonisolated var isBluetoothReady: Bool {
         communicator.isBluetoothReady
     }
 
     /// Get discovered devices
-    public func getDiscoveredDevices() async -> [DiscoveredDevice] {
-        await communicator.getDiscoveredDevices()
-    }
-
-    /// Get the currently connected cube
-    public func getConnectedCube() async -> GoCube? {
-        await state.connectedCube
-    }
-
-    /// Whether currently scanning
-    public func isScanning() async -> Bool {
-        await state.isScanning
+    public nonisolated var discoveredDevices: [DiscoveredDevice] {
+        communicator.discoveredDevices
     }
 
     /// Whether connected to a cube
-    public func isConnected() async -> Bool {
-        await state.isConnected
+    public var isConnected: Bool {
+        connectedCube != nil
     }
 
     // MARK: - Scanning
 
     /// Start scanning for GoCube devices
-    public func startScanning() async {
-        await state.setScanning(true)
-        await communicator.startScanning()
+    public func startScanning() {
+        isScanning = true
+        communicator.startScanning()
     }
 
     /// Stop scanning for devices
-    public func stopScanning() async {
-        await state.setScanning(false)
-        await communicator.stopScanning()
+    public func stopScanning() {
+        isScanning = false
+        communicator.stopScanning()
     }
 
     // MARK: - Connection
@@ -187,7 +172,8 @@ public final class GoCubeManager: Sendable {
             try await communicator.connect(to: device)
 
             let cube = GoCube(device: device, communicator: communicator, configuration: configuration)
-            await state.setConnectedCube(cube)
+            cube.setupCallbacks()
+            connectedCube = cube
 
             // Request initial state
             try? cube.requestState()
@@ -218,9 +204,9 @@ public final class GoCubeManager: Sendable {
     }
 
     /// Disconnect from the current cube
-    public func disconnect() async {
-        await communicator.disconnect()
-        await state.setConnectedCube(nil)
+    public func disconnect() {
+        communicator.disconnect()
+        connectedCube = nil
     }
 
     /// Connect to the first available GoCube
@@ -228,7 +214,7 @@ public final class GoCubeManager: Sendable {
     /// - Returns: The connected GoCube instance
     @discardableResult
     public func connectToFirstAvailable() async throws -> GoCube {
-        await startScanning()
+        startScanning()
 
         // Wait for a device to be discovered with timeout
         // Uses Task.sleep with proper cancellation handling to avoid race conditions
@@ -236,7 +222,7 @@ public final class GoCubeManager: Sendable {
             // Task to wait for device discovery
             group.addTask {
                 while true {
-                    let devices = await self.communicator.getDiscoveredDevices()
+                    let devices = self.communicator.discoveredDevices
                     if let device = devices.first {
                         return device
                     }
@@ -259,7 +245,7 @@ public final class GoCubeManager: Sendable {
             return result
         }
 
-        await stopScanning()
+        stopScanning()
         return try await connect(to: device)
     }
 }

@@ -62,8 +62,8 @@ public final class BLECommunicator: NSObject, Sendable {
     /// Called on MainActor when connection state changes
     public nonisolated(unsafe) var onConnectionStateChanged: (@Sendable @MainActor (ConnectionState) -> Void)?
 
-    /// Called on CubeActor when a message is received
-    public nonisolated(unsafe) var onMessageReceived: (@Sendable @CubeActor (GoCubeMessage) -> Void)?
+    /// Called when a message is received (caller should dispatch to appropriate actor)
+    public nonisolated(unsafe) var onMessageReceived: (@Sendable (GoCubeMessage) -> Void)?
 
     /// Called on MainActor when Bluetooth state changes
     public nonisolated(unsafe) var onBluetoothStateChanged: (@Sendable @MainActor (CBManagerState) -> Void)?
@@ -147,19 +147,18 @@ public final class BLECommunicator: NSObject, Sendable {
         }
 
         stopScanning()
-
-        lock.lock()
-        _connectionState = .connecting
-        lock.unlock()
-
-        Task { @MainActor in onConnectionStateChanged?(.connecting) }
+        setConnectionState(.connecting)
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            lock.lock()
-            self.connectionContinuation = continuation
-            lock.unlock()
+            self.setConnectionContinuation(continuation)
             self.centralManager.connect(device.peripheral, options: nil)
         }
+    }
+
+    private func setConnectionContinuation(_ continuation: CheckedContinuation<Void, Error>) {
+        lock.lock()
+        connectionContinuation = continuation
+        lock.unlock()
     }
 
     public func disconnect() {
@@ -202,7 +201,7 @@ public final class BLECommunicator: NSObject, Sendable {
             lock.unlock()
             do {
                 let message = try messageParser.parse(messageData)
-                Task { @CubeActor in self.onMessageReceived?(message) }
+                self.onMessageReceived?(message)
             } catch {
                 logger.error("Failed to parse message: \(error.localizedDescription)")
             }

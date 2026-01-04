@@ -2,20 +2,22 @@ import Foundation
 import os.log
 
 /// Represents a connected GoCube device
-public final class GoCube: Sendable {
+/// Isolated to CubeActor for thread-safe state management
+@CubeActor
+public final class GoCube {
 
     // MARK: - Properties
 
     private let logger = Logger(subsystem: "com.gocubekit", category: "GoCube")
 
     /// Device identifier
-    public let id: UUID
+    public nonisolated let id: UUID
 
     /// Device name
-    public let name: String
+    public nonisolated let name: String
 
     /// Configuration
-    public let configuration: GoCubeConfiguration
+    public nonisolated let configuration: GoCubeConfiguration
 
     /// BLE communicator
     private let communicator: BLECommunicator
@@ -31,8 +33,22 @@ public final class GoCube: Sendable {
     /// Orientation manager for relative orientation
     public let orientationManager = OrientationManager()
 
-    /// State actor for thread-safe state management
-    private let stateActor = GoCubeState()
+    // MARK: - State (protected by CubeActor isolation)
+
+    /// Current cube state (if known)
+    public private(set) var currentState: CubeState?
+
+    /// Current battery level (if known)
+    public private(set) var batteryLevel: Int?
+
+    /// Current cube type (if known)
+    public private(set) var cubeType: GoCubeType?
+
+    /// Accumulated move sequence since last reset
+    public private(set) var moveSequence = MoveSequence()
+
+    /// Whether orientation tracking is enabled
+    public private(set) var isOrientationEnabled = false
 
     // MARK: - Callbacks
 
@@ -62,15 +78,14 @@ public final class GoCube: Sendable {
         self.communicator = communicator
         self.configuration = configuration
         self.quaternionSmoother = QuaternionSmoother(smoothingFactor: configuration.quaternionSmoothingFactor)
-
-        setupCallbacks()
     }
 
-    private func setupCallbacks() {
+    /// Setup callbacks after initialization (must be called separately due to actor isolation)
+    public func setupCallbacks() {
         // Subscribe to received messages
         communicator.onMessageReceived = { [weak self] message in
             guard let self = self else { return }
-            Task {
+            Task { @CubeActor in
                 await self.handleMessage(message)
             }
         }
@@ -84,33 +99,6 @@ public final class GoCube: Sendable {
                 }
             }
         }
-    }
-
-    // MARK: - State Accessors
-
-    /// Current cube state (if known)
-    public func getCurrentState() async -> CubeState? {
-        await stateActor.currentState
-    }
-
-    /// Current battery level (if known)
-    public func getBatteryLevel() async -> Int? {
-        await stateActor.batteryLevel
-    }
-
-    /// Current cube type (if known)
-    public func getCubeType() async -> GoCubeType? {
-        await stateActor.cubeType
-    }
-
-    /// Accumulated move sequence since last reset
-    public func getMoveSequence() async -> MoveSequence {
-        await stateActor.moveSequence
-    }
-
-    /// Whether orientation tracking is enabled
-    public func isOrientationEnabled() async -> Bool {
-        await stateActor.isOrientationEnabled
     }
 
     // MARK: - Message Handling
@@ -141,7 +129,7 @@ public final class GoCube: Sendable {
         do {
             let moves = try moveDecoder.decode(payload)
             for move in moves {
-                await stateActor.appendMove(move)
+                moveSequence.append(move)
 
                 Task { @MainActor in
                     self.onMove?(move)
@@ -156,7 +144,7 @@ public final class GoCube: Sendable {
     private func handleStateMessage(_ payload: Data) async {
         do {
             let state = try stateDecoder.decode(payload)
-            await stateActor.setCurrentState(state)
+            currentState = state
 
             Task { @MainActor in
                 self.onStateUpdated?(state)
@@ -184,12 +172,12 @@ public final class GoCube: Sendable {
 
     private func handleBatteryMessage(_ payload: Data) async {
         guard let level = payload.first else { return }
-        let batteryLevel = Int(min(level, 100))
-        await stateActor.setBatteryLevel(batteryLevel)
+        let battLevel = Int(min(level, 100))
+        batteryLevel = battLevel
 
         Task { @MainActor in
-            self.onBatteryUpdated?(batteryLevel)
-            self.delegate?.goCube(self, didUpdateBattery: batteryLevel)
+            self.onBatteryUpdated?(battLevel)
+            self.delegate?.goCube(self, didUpdateBattery: battLevel)
         }
     }
 
@@ -203,7 +191,7 @@ public final class GoCube: Sendable {
     private func handleCubeTypeMessage(_ payload: Data) async {
         guard let typeRaw = payload.first else { return }
         let type = GoCubeType(rawValue: typeRaw)
-        await stateActor.setCubeType(type)
+        cubeType = type
 
         Task { @MainActor in
             self.onCubeTypeReceived?(type)
@@ -227,7 +215,7 @@ public final class GoCube: Sendable {
         let deadline = ContinuousClock.now.advanced(by: timeout)
 
         while ContinuousClock.now < deadline {
-            if let level = await stateActor.batteryLevel {
+            if let level = batteryLevel {
                 return level
             }
             try await Task.sleep(for: .milliseconds(50))
@@ -250,7 +238,7 @@ public final class GoCube: Sendable {
         let deadline = ContinuousClock.now.advanced(by: timeout)
 
         while ContinuousClock.now < deadline {
-            if let state = await stateActor.currentState {
+            if let state = currentState {
                 return state
             }
             try await Task.sleep(for: .milliseconds(50))
@@ -265,7 +253,7 @@ public final class GoCube: Sendable {
     }
 
     /// Request cube type and wait for response
-    public func getCubeType() async throws -> GoCubeType {
+    public func fetchCubeType() async throws -> GoCubeType {
         try communicator.sendCommand(.getCubeType)
 
         // Poll for result with timeout
@@ -273,7 +261,7 @@ public final class GoCube: Sendable {
         let deadline = ContinuousClock.now.advanced(by: timeout)
 
         while ContinuousClock.now < deadline {
-            if let type = await stateActor.cubeType {
+            if let type = cubeType {
                 return type
             }
             try await Task.sleep(for: .milliseconds(50))
@@ -284,10 +272,10 @@ public final class GoCube: Sendable {
 
     /// Reset the cube tracking to solved state
     /// Note: Updates local state immediately; actual cube state is confirmed via state callback
-    public func resetToSolved() async throws {
+    public func resetToSolved() throws {
         try communicator.sendCommand(.resetToSolved)
-        await stateActor.setCurrentState(.solved)
-        await stateActor.clearMoveSequence()
+        currentState = .solved
+        moveSequence = MoveSequence()
     }
 
     /// Reboot the cube
@@ -296,15 +284,15 @@ public final class GoCube: Sendable {
     }
 
     /// Enable 3D orientation tracking (~15 Hz updates)
-    public func enableOrientation() async throws {
+    public func enableOrientation() throws {
         try communicator.sendCommand(.enableOrientation)
-        await stateActor.setOrientationEnabled(true)
+        isOrientationEnabled = true
     }
 
     /// Disable 3D orientation tracking
-    public func disableOrientation() async throws {
+    public func disableOrientation() throws {
         try communicator.sendCommand(.disableOrientation)
-        await stateActor.setOrientationEnabled(false)
+        isOrientationEnabled = false
     }
 
     /// Calibrate the orientation sensor
@@ -354,57 +342,22 @@ public final class GoCube: Sendable {
     // MARK: - Move Sequence Management
 
     /// Clear the accumulated move sequence
-    public func clearMoveSequence() async {
-        await stateActor.clearMoveSequence()
+    public func clearMoveSequence() {
+        moveSequence = MoveSequence()
     }
 
     // MARK: - Connection
 
     /// Disconnect from the cube
-    public func disconnect() async {
-        await communicator.disconnect()
+    public func disconnect() {
+        communicator.disconnect()
     }
 }
 
 // MARK: - CustomStringConvertible
 
 extension GoCube: CustomStringConvertible {
-    public var description: String {
+    public nonisolated var description: String {
         "GoCube(\(name), id: \(id))"
-    }
-}
-
-// MARK: - GoCube State Actor
-
-/// Actor that manages GoCube state for thread-safe access
-actor GoCubeState {
-    private(set) var currentState: CubeState?
-    private(set) var batteryLevel: Int?
-    private(set) var cubeType: GoCubeType?
-    private(set) var moveSequence = MoveSequence()
-    private(set) var isOrientationEnabled = false
-
-    func setCurrentState(_ state: CubeState) {
-        currentState = state
-    }
-
-    func setBatteryLevel(_ level: Int) {
-        batteryLevel = level
-    }
-
-    func setCubeType(_ type: GoCubeType) {
-        cubeType = type
-    }
-
-    func appendMove(_ move: Move) {
-        moveSequence.append(move)
-    }
-
-    func clearMoveSequence() {
-        moveSequence = MoveSequence()
-    }
-
-    func setOrientationEnabled(_ enabled: Bool) {
-        isOrientationEnabled = enabled
     }
 }
