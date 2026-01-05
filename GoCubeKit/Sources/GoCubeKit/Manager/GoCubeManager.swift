@@ -47,6 +47,12 @@ public final class GoCubeManager {
     /// Configuration
     public nonisolated let configuration: GoCubeConfiguration
 
+    // MARK: - Stream Listener Tasks
+
+    private var discoveryListenerTask: Task<Void, Never>?
+    private var bluetoothStateListenerTask: Task<Void, Never>?
+    private var connectionStateListenerTask: Task<Void, Never>?
+
     // MARK: - State (protected by CubeActor isolation)
 
     /// Currently connected cube
@@ -90,55 +96,65 @@ public final class GoCubeManager {
         self.configuration = configuration
     }
 
-    /// Setup callbacks after initialization (must be called separately due to actor isolation)
-    public func setupCallbacks() {
-        // Forward discovered devices
-        communicator.onDevicesDiscovered = { [weak self] devices in
+    /// Start listening to BLE streams for callbacks/delegate
+    public func startListening() {
+        // Listen for device discoveries
+        discoveryListenerTask = Task { [weak self] in
             guard let self = self else { return }
-            Task { @MainActor in
-                self.delegate?.goCubeManager(self, didDiscoverDevices: devices)
-                self.onDevicesDiscovered?(devices)
+            for await devices in self.communicator.discoveries {
+                Task { @MainActor in
+                    self.delegate?.goCubeManager(self, didDiscoverDevices: devices)
+                    self.onDevicesDiscovered?(devices)
+                }
             }
         }
 
-        // Forward Bluetooth state
-        communicator.onBluetoothStateChanged = { [weak self] state in
+        // Listen for Bluetooth state changes
+        bluetoothStateListenerTask = Task { [weak self] in
             guard let self = self else { return }
-            Task { @MainActor in
-                self.delegate?.goCubeManager(self, didUpdateBluetoothState: state)
-                self.onBluetoothStateChanged?(state)
+            for await state in self.communicator.bluetoothStateChanges {
+                Task { @MainActor in
+                    self.delegate?.goCubeManager(self, didUpdateBluetoothState: state)
+                    self.onBluetoothStateChanged?(state)
+                }
             }
         }
 
-        // Track connection state
-        communicator.onConnectionStateChanged = { [weak self] connectionState in
+        // Listen for connection state changes
+        connectionStateListenerTask = Task { [weak self] in
             guard let self = self else { return }
-            if connectionState == .disconnected {
-                Task {
-                    await self.clearConnectedCube()
+            for await state in self.communicator.connectionStateChanges {
+                if state == .disconnected {
+                    self.connectedCube = nil
                 }
             }
         }
     }
 
-    private func clearConnectedCube() {
-        connectedCube = nil
+    /// Stop listening to BLE streams
+    public func stopListening() {
+        discoveryListenerTask?.cancel()
+        discoveryListenerTask = nil
+        bluetoothStateListenerTask?.cancel()
+        bluetoothStateListenerTask = nil
+        connectionStateListenerTask?.cancel()
+        connectionStateListenerTask = nil
     }
 
     // MARK: - Public API
 
     /// Current Bluetooth state
-    public nonisolated var bluetoothState: CBManagerState {
+    public var bluetoothState: CBManagerState {
         communicator.bluetoothState
     }
 
     /// Whether Bluetooth is ready for use
-    public nonisolated var isBluetoothReady: Bool {
+    public var isBluetoothReady: Bool {
         communicator.isBluetoothReady
     }
 
     /// Get discovered devices
-    public nonisolated var discoveredDevices: [DiscoveredDevice] {
+    public var discoveredDevices: [DiscoveredDevice] {
         communicator.discoveredDevices
     }
 
@@ -172,7 +188,7 @@ public final class GoCubeManager {
             try await communicator.connect(to: device)
 
             let cube = GoCube(device: device, communicator: communicator, configuration: configuration)
-            cube.setupCallbacks()
+            cube.startListening()
             connectedCube = cube
 
             // Request initial state
@@ -205,6 +221,7 @@ public final class GoCubeManager {
 
     /// Disconnect from the current cube
     public func disconnect() {
+        connectedCube?.stopListening()
         communicator.disconnect()
         connectedCube = nil
     }
@@ -217,18 +234,15 @@ public final class GoCubeManager {
         startScanning()
 
         // Wait for a device to be discovered with timeout
-        // Uses Task.sleep with proper cancellation handling to avoid race conditions
         let device: DiscoveredDevice = try await withThrowingTaskGroup(of: DiscoveredDevice.self) { group in
             // Task to wait for device discovery
             group.addTask {
-                while true {
-                    let devices = self.communicator.discoveredDevices
+                for await devices in self.communicator.discoveries {
                     if let device = devices.first {
                         return device
                     }
-                    // Check periodically
-                    try await Task.sleep(for: .milliseconds(100))
                 }
+                throw GoCubeError.connection(.deviceNotFound)
             }
 
             // Task for timeout

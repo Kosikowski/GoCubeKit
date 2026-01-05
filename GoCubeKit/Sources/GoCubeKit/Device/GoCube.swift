@@ -33,6 +33,10 @@ public final class GoCube {
     /// Orientation manager for relative orientation
     public let orientationManager = OrientationManager()
 
+    /// Task for listening to message stream
+    private var messageListenerTask: Task<Void, Never>?
+    private var connectionListenerTask: Task<Void, Never>?
+
     // MARK: - State (protected by CubeActor isolation)
 
     /// Current cube state (if known)
@@ -80,25 +84,35 @@ public final class GoCube {
         self.quaternionSmoother = QuaternionSmoother(smoothingFactor: configuration.quaternionSmoothingFactor)
     }
 
-    /// Setup callbacks after initialization (must be called separately due to actor isolation)
-    public func setupCallbacks() {
-        // Subscribe to received messages
-        communicator.onMessageReceived = { [weak self] message in
+    /// Start listening to message and connection streams
+    public func startListening() {
+        // Listen for messages from the cube
+        messageListenerTask = Task { [weak self] in
             guard let self = self else { return }
-            Task { @CubeActor in
+            for await message in self.communicator.messages {
                 await self.handleMessage(message)
             }
         }
 
-        // Subscribe to connection state changes
-        communicator.onConnectionStateChanged = { [weak self] state in
+        // Listen for connection state changes
+        connectionListenerTask = Task { [weak self] in
             guard let self = self else { return }
-            if state == .disconnected {
-                Task { @MainActor in
-                    self.delegate?.goCubeDidDisconnect(self)
+            for await state in self.communicator.connectionStateChanges {
+                if state == .disconnected {
+                    Task { @MainActor in
+                        self.delegate?.goCubeDidDisconnect(self)
+                    }
                 }
             }
         }
+    }
+
+    /// Stop listening to streams
+    public func stopListening() {
+        messageListenerTask?.cancel()
+        messageListenerTask = nil
+        connectionListenerTask?.cancel()
+        connectionListenerTask = nil
     }
 
     // MARK: - Message Handling
@@ -350,6 +364,7 @@ public final class GoCube {
 
     /// Disconnect from the cube
     public func disconnect() {
+        stopListening()
         communicator.disconnect()
     }
 }
