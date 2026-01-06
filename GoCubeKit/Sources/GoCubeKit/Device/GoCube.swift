@@ -54,25 +54,31 @@ public final class GoCube {
     /// Whether orientation tracking is enabled
     public private(set) var isOrientationEnabled = false
 
-    // MARK: - Callbacks
+    // MARK: - Public AsyncStreams (modern Swift concurrency API)
 
-    /// Delegate for receiving events
-    public nonisolated(unsafe) weak var delegate: GoCubeDelegate?
+    /// Stream of moves received from the cube
+    public let moves: AsyncStream<Move>
+    private let movesContinuation: AsyncStream<Move>.Continuation
 
-    /// Callback when a move is received
-    public nonisolated(unsafe) var onMove: (@Sendable @MainActor (Move) -> Void)?
+    /// Stream of cube state updates
+    public let stateUpdates: AsyncStream<CubeState>
+    private let stateUpdatesContinuation: AsyncStream<CubeState>.Continuation
 
-    /// Callback when cube state is updated
-    public nonisolated(unsafe) var onStateUpdated: (@Sendable @MainActor (CubeState) -> Void)?
+    /// Stream of orientation updates (quaternions)
+    public let orientationUpdates: AsyncStream<Quaternion>
+    private let orientationUpdatesContinuation: AsyncStream<Quaternion>.Continuation
 
-    /// Callback when orientation is updated
-    public nonisolated(unsafe) var onOrientationUpdated: (@Sendable @MainActor (Quaternion) -> Void)?
+    /// Stream of battery level updates
+    public let batteryUpdates: AsyncStream<Int>
+    private let batteryUpdatesContinuation: AsyncStream<Int>.Continuation
 
-    /// Callback when battery level is updated
-    public nonisolated(unsafe) var onBatteryUpdated: (@Sendable @MainActor (Int) -> Void)?
+    /// Stream of cube type updates
+    public let cubeTypeUpdates: AsyncStream<GoCubeType>
+    private let cubeTypeUpdatesContinuation: AsyncStream<GoCubeType>.Continuation
 
-    /// Callback when cube type is received
-    public nonisolated(unsafe) var onCubeTypeReceived: (@Sendable @MainActor (GoCubeType) -> Void)?
+    /// Stream that emits when the cube disconnects
+    public let disconnections: AsyncStream<Void>
+    private let disconnectionsContinuation: AsyncStream<Void>.Continuation
 
     // MARK: - Initialization
 
@@ -82,6 +88,40 @@ public final class GoCube {
         self.communicator = communicator
         self.configuration = configuration
         self.quaternionSmoother = QuaternionSmoother(smoothingFactor: configuration.quaternionSmoothingFactor)
+
+        // Initialize AsyncStreams
+        var movesCont: AsyncStream<Move>.Continuation!
+        moves = AsyncStream { movesCont = $0 }
+        movesContinuation = movesCont
+
+        var stateCont: AsyncStream<CubeState>.Continuation!
+        stateUpdates = AsyncStream { stateCont = $0 }
+        stateUpdatesContinuation = stateCont
+
+        var orientCont: AsyncStream<Quaternion>.Continuation!
+        orientationUpdates = AsyncStream { orientCont = $0 }
+        orientationUpdatesContinuation = orientCont
+
+        var batteryCont: AsyncStream<Int>.Continuation!
+        batteryUpdates = AsyncStream { batteryCont = $0 }
+        batteryUpdatesContinuation = batteryCont
+
+        var typeCont: AsyncStream<GoCubeType>.Continuation!
+        cubeTypeUpdates = AsyncStream { typeCont = $0 }
+        cubeTypeUpdatesContinuation = typeCont
+
+        var disconnectCont: AsyncStream<Void>.Continuation!
+        disconnections = AsyncStream { disconnectCont = $0 }
+        disconnectionsContinuation = disconnectCont
+    }
+
+    deinit {
+        movesContinuation.finish()
+        stateUpdatesContinuation.finish()
+        orientationUpdatesContinuation.finish()
+        batteryUpdatesContinuation.finish()
+        cubeTypeUpdatesContinuation.finish()
+        disconnectionsContinuation.finish()
     }
 
     /// Start listening to message and connection streams
@@ -99,9 +139,7 @@ public final class GoCube {
             guard let self = self else { return }
             for await state in self.communicator.connectionStateChanges {
                 if state == .disconnected {
-                    Task { @MainActor in
-                        self.delegate?.goCubeDidDisconnect(self)
-                    }
+                    self.disconnectionsContinuation.yield(())
                 }
             }
         }
@@ -141,14 +179,10 @@ public final class GoCube {
 
     private func handleRotationMessage(_ payload: Data) async {
         do {
-            let moves = try moveDecoder.decode(payload)
-            for move in moves {
+            let decodedMoves = try moveDecoder.decode(payload)
+            for move in decodedMoves {
                 moveSequence.append(move)
-
-                Task { @MainActor in
-                    self.onMove?(move)
-                    self.delegate?.goCube(self, didReceiveMove: move)
-                }
+                movesContinuation.yield(move)
             }
         } catch {
             logger.error("Failed to decode rotation: \(error.localizedDescription)")
@@ -159,11 +193,7 @@ public final class GoCube {
         do {
             let state = try stateDecoder.decode(payload)
             currentState = state
-
-            Task { @MainActor in
-                self.onStateUpdated?(state)
-                self.delegate?.goCube(self, didUpdateState: state)
-            }
+            stateUpdatesContinuation.yield(state)
         } catch {
             logger.error("Failed to decode state: \(error.localizedDescription)")
         }
@@ -174,11 +204,7 @@ public final class GoCube {
             let rawQuaternion = try quaternionDecoder.decode(payload)
             let smoothed = await quaternionSmoother.update(rawQuaternion)
             let relative = await orientationManager.relativeOrientation(smoothed)
-
-            Task { @MainActor in
-                self.onOrientationUpdated?(relative)
-                self.delegate?.goCube(self, didUpdateOrientation: relative)
-            }
+            orientationUpdatesContinuation.yield(relative)
         } catch {
             logger.error("Failed to decode orientation: \(error.localizedDescription)")
         }
@@ -188,11 +214,7 @@ public final class GoCube {
         guard let level = payload.first else { return }
         let battLevel = Int(min(level, 100))
         batteryLevel = battLevel
-
-        Task { @MainActor in
-            self.onBatteryUpdated?(battLevel)
-            self.delegate?.goCube(self, didUpdateBattery: battLevel)
-        }
+        batteryUpdatesContinuation.yield(battLevel)
     }
 
     private func handleOfflineStatsMessage(_ payload: Data) {
@@ -206,11 +228,7 @@ public final class GoCube {
         guard let typeRaw = payload.first else { return }
         let type = GoCubeType(rawValue: typeRaw)
         cubeType = type
-
-        Task { @MainActor in
-            self.onCubeTypeReceived?(type)
-            self.delegate?.goCube(self, didReceiveCubeType: type)
-        }
+        cubeTypeUpdatesContinuation.yield(type)
     }
 
     // MARK: - Commands
