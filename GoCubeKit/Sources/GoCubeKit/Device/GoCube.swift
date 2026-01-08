@@ -303,7 +303,7 @@ public final class GoCube {
     }
 
     /// Reset the cube tracking to solved state
-    /// Note: Updates local state immediately; actual cube state is confirmed via state callback
+    /// Note: Updates local state immediately; actual cube state is confirmed via stateUpdates stream
     public func resetToSolved() throws {
         try communicator.sendCommand(.resetToSolved)
         currentState = .solved

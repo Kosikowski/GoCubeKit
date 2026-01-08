@@ -2,30 +2,6 @@ import Foundation
 @preconcurrency import CoreBluetooth
 import os.log
 
-/// Delegate protocol for GoCubeManager events
-public protocol GoCubeManagerDelegate: AnyObject, Sendable {
-    /// Called when the list of discovered devices is updated
-    @MainActor func goCubeManager(_ manager: GoCubeManager, didDiscoverDevices devices: [DiscoveredDevice])
-
-    /// Called when a cube is successfully connected
-    @MainActor func goCubeManager(_ manager: GoCubeManager, didConnect cube: GoCube)
-
-    /// Called when connection fails
-    @MainActor func goCubeManager(_ manager: GoCubeManager, didFailToConnect error: GoCubeError)
-
-    /// Called when Bluetooth state changes
-    @MainActor func goCubeManager(_ manager: GoCubeManager, didUpdateBluetoothState state: CBManagerState)
-}
-
-// MARK: - Default Implementations
-
-public extension GoCubeManagerDelegate {
-    @MainActor func goCubeManager(_ manager: GoCubeManager, didDiscoverDevices devices: [DiscoveredDevice]) {}
-    @MainActor func goCubeManager(_ manager: GoCubeManager, didConnect cube: GoCube) {}
-    @MainActor func goCubeManager(_ manager: GoCubeManager, didFailToConnect error: GoCubeError) {}
-    @MainActor func goCubeManager(_ manager: GoCubeManager, didUpdateBluetoothState state: CBManagerState) {}
-}
-
 /// Manager for discovering and connecting to GoCube devices
 /// Isolated to CubeActor for thread-safe state management
 @CubeActor
@@ -53,6 +29,24 @@ public final class GoCubeManager {
     private var bluetoothStateListenerTask: Task<Void, Never>?
     private var connectionStateListenerTask: Task<Void, Never>?
 
+    // MARK: - Public AsyncStreams (modern Swift concurrency API)
+
+    /// Stream of discovered devices
+    public let deviceDiscoveries: AsyncStream<[DiscoveredDevice]>
+    private let deviceDiscoveriesContinuation: AsyncStream<[DiscoveredDevice]>.Continuation
+
+    /// Stream of successful connections
+    public let connections: AsyncStream<GoCube>
+    private let connectionsContinuation: AsyncStream<GoCube>.Continuation
+
+    /// Stream of connection failures
+    public let connectionFailures: AsyncStream<GoCubeError>
+    private let connectionFailuresContinuation: AsyncStream<GoCubeError>.Continuation
+
+    /// Stream of Bluetooth state changes
+    public let bluetoothStateUpdates: AsyncStream<CBManagerState>
+    private let bluetoothStateUpdatesContinuation: AsyncStream<CBManagerState>.Continuation
+
     // MARK: - State (protected by CubeActor isolation)
 
     /// Currently connected cube
@@ -60,23 +54,6 @@ public final class GoCubeManager {
 
     /// Whether currently scanning for devices
     public private(set) var isScanning: Bool = false
-
-    /// Delegate for receiving events
-    public nonisolated(unsafe) weak var delegate: GoCubeManagerDelegate?
-
-    // MARK: - Callbacks (alternative to delegate)
-
-    /// Callback when devices are discovered
-    public nonisolated(unsafe) var onDevicesDiscovered: (@Sendable @MainActor ([DiscoveredDevice]) -> Void)?
-
-    /// Callback when connected
-    public nonisolated(unsafe) var onConnected: (@Sendable @MainActor (GoCube) -> Void)?
-
-    /// Callback when connection fails
-    public nonisolated(unsafe) var onConnectionFailed: (@Sendable @MainActor (GoCubeError) -> Void)?
-
-    /// Callback when Bluetooth state changes
-    public nonisolated(unsafe) var onBluetoothStateChanged: (@Sendable @MainActor (CBManagerState) -> Void)?
 
     // MARK: - Initialization
 
@@ -94,18 +71,39 @@ public final class GoCubeManager {
     public init(communicator: BLECommunicator, configuration: GoCubeConfiguration = .default) {
         self.communicator = communicator
         self.configuration = configuration
+
+        // Initialize AsyncStreams
+        var discoveriesCont: AsyncStream<[DiscoveredDevice]>.Continuation!
+        deviceDiscoveries = AsyncStream { discoveriesCont = $0 }
+        deviceDiscoveriesContinuation = discoveriesCont
+
+        var connectionsCont: AsyncStream<GoCube>.Continuation!
+        connections = AsyncStream { connectionsCont = $0 }
+        connectionsContinuation = connectionsCont
+
+        var failuresCont: AsyncStream<GoCubeError>.Continuation!
+        connectionFailures = AsyncStream { failuresCont = $0 }
+        connectionFailuresContinuation = failuresCont
+
+        var btStateCont: AsyncStream<CBManagerState>.Continuation!
+        bluetoothStateUpdates = AsyncStream { btStateCont = $0 }
+        bluetoothStateUpdatesContinuation = btStateCont
     }
 
-    /// Start listening to BLE streams for callbacks/delegate
+    deinit {
+        deviceDiscoveriesContinuation.finish()
+        connectionsContinuation.finish()
+        connectionFailuresContinuation.finish()
+        bluetoothStateUpdatesContinuation.finish()
+    }
+
+    /// Start listening to BLE streams and forwarding to public AsyncStreams
     public func startListening() {
         // Listen for device discoveries
         discoveryListenerTask = Task { [weak self] in
             guard let self = self else { return }
             for await devices in self.communicator.discoveries {
-                Task { @MainActor in
-                    self.delegate?.goCubeManager(self, didDiscoverDevices: devices)
-                    self.onDevicesDiscovered?(devices)
-                }
+                self.deviceDiscoveriesContinuation.yield(devices)
             }
         }
 
@@ -113,10 +111,7 @@ public final class GoCubeManager {
         bluetoothStateListenerTask = Task { [weak self] in
             guard let self = self else { return }
             for await state in self.communicator.bluetoothStateChanges {
-                Task { @MainActor in
-                    self.delegate?.goCubeManager(self, didUpdateBluetoothState: state)
-                    self.onBluetoothStateChanged?(state)
-                }
+                self.bluetoothStateUpdatesContinuation.yield(state)
             }
         }
 
@@ -196,25 +191,16 @@ public final class GoCubeManager {
             try? cube.requestBattery()
             try? cube.requestCubeType()
 
-            Task { @MainActor in
-                self.delegate?.goCubeManager(self, didConnect: cube)
-                self.onConnected?(cube)
-                cube.delegate?.goCubeDidConnect(cube)
-            }
+            // Emit to AsyncStream
+            connectionsContinuation.yield(cube)
 
             return cube
         } catch let error as GoCubeError {
-            Task { @MainActor in
-                self.delegate?.goCubeManager(self, didFailToConnect: error)
-                self.onConnectionFailed?(error)
-            }
+            connectionFailuresContinuation.yield(error)
             throw error
         } catch {
             let goCubeError = GoCubeError.connectionFailed(error.localizedDescription)
-            Task { @MainActor in
-                self.delegate?.goCubeManager(self, didFailToConnect: goCubeError)
-                self.onConnectionFailed?(goCubeError)
-            }
+            connectionFailuresContinuation.yield(goCubeError)
             throw goCubeError
         }
     }
