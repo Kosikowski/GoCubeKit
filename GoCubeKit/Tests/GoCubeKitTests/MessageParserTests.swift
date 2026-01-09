@@ -90,8 +90,8 @@ final class MessageParserTests: XCTestCase {
         // Length = type (1) + payload (60) = 61 = 0x3D
         var bytes: [UInt8] = [0x2A, 0x3D, 0x02] // Prefix, length (61), type
         // Add 60 bytes of payload (54 facelets + 6 center orientations)
-        let statePayload = Array(repeating: UInt8(0), count: 60)
-        bytes.append(contentsOf: statePayload)
+        let payload = Array(repeating: UInt8(0), count: 60)
+        bytes.append(contentsOf: payload)
         // Calculate checksum
         let checksumBytes = bytes
         let checksum = parser.calculateChecksum(checksumBytes)
@@ -161,7 +161,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data([0x2A, 0x01, 0x01]) // Only 3 bytes, minimum is 5
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case MessageParserError.messageTooShort(let length) = error else {
+            guard case GoCubeError.parsing(.messageTooShort(let length)) = error else {
                 XCTFail("Expected messageTooShort error")
                 return
             }
@@ -173,7 +173,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data()
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case MessageParserError.messageTooShort(let length) = error else {
+            guard case GoCubeError.parsing(.messageTooShort(let length)) = error else {
                 XCTFail("Expected messageTooShort error")
                 return
             }
@@ -186,7 +186,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case MessageParserError.invalidPrefix(let received) = error else {
+            guard case GoCubeError.parsing(.invalidPrefix(let received)) = error else {
                 XCTFail("Expected invalidPrefix error")
                 return
             }
@@ -199,10 +199,11 @@ final class MessageParserTests: XCTestCase {
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case MessageParserError.invalidSuffix = error else {
+            guard case GoCubeError.parsing(.invalidSuffix(let received)) = error else {
                 XCTFail("Expected invalidSuffix error")
                 return
             }
+            _ = received // Received value may vary based on implementation
         }
     }
 
@@ -211,7 +212,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case MessageParserError.invalidSuffix = error else {
+            guard case GoCubeError.parsing(.invalidSuffix) = error else {
                 XCTFail("Expected invalidSuffix error")
                 return
             }
@@ -223,7 +224,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case MessageParserError.invalidSuffix = error else {
+            guard case GoCubeError.parsing(.invalidSuffix) = error else {
                 XCTFail("Expected invalidSuffix error")
                 return
             }
@@ -235,7 +236,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case MessageParserError.checksumMismatch(let expected, let received) = error else {
+            guard case GoCubeError.parsing(.checksumMismatch(let expected, let received)) = error else {
                 XCTFail("Expected checksumMismatch error")
                 return
             }
@@ -250,7 +251,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case MessageParserError.unknownMessageType(let type) = error else {
+            guard case GoCubeError.parsing(.unknownMessageType(let type)) = error else {
                 XCTFail("Expected unknownMessageType error")
                 return
             }
@@ -264,7 +265,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case MessageParserError.payloadLengthMismatch = error else {
+            guard case GoCubeError.parsing(.payloadLengthMismatch) = error else {
                 XCTFail("Expected payloadLengthMismatch error")
                 return
             }
@@ -385,59 +386,59 @@ final class MessageBufferTests: XCTestCase {
         super.tearDown()
     }
 
-    func testAppend_CompleteMessage_ReturnsMessage() {
+    func testAppend_CompleteMessage_ReturnsMessage() async {
         let bytes: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0D, 0x0A]
         let data = Data(bytes)
 
-        let messages = buffer.append(data)
+        let messages = await buffer.append(data)
 
         XCTAssertEqual(messages.count, 1)
         XCTAssertEqual(messages[0], data)
     }
 
-    func testAppend_PartialMessage_ReturnsEmpty() {
+    func testAppend_PartialMessage_ReturnsEmpty() async {
         let partialData = Data([0x2A, 0x02, 0x05])
 
-        let messages = buffer.append(partialData)
+        let messages = await buffer.append(partialData)
 
         XCTAssertEqual(messages.count, 0)
     }
 
-    func testAppend_TwoPartialMessages_ReturnsMerged() {
+    func testAppend_TwoPartialMessages_ReturnsMerged() async {
         let part1 = Data([0x2A, 0x02, 0x05])
         let part2 = Data([0x55, 0x86, 0x0D, 0x0A])
 
-        let messages1 = buffer.append(part1)
+        let messages1 = await buffer.append(part1)
         XCTAssertEqual(messages1.count, 0)
 
-        let messages2 = buffer.append(part2)
+        let messages2 = await buffer.append(part2)
         XCTAssertEqual(messages2.count, 1)
     }
 
-    func testAppend_TwoCompleteMessages_ReturnsBoth() {
+    func testAppend_TwoCompleteMessages_ReturnsBoth() async {
         let msg1: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0D, 0x0A]
         let msg2: [UInt8] = [0x2A, 0x02, 0x05, 0x64, 0x95, 0x0D, 0x0A]
         var combined = msg1
         combined.append(contentsOf: msg2)
 
-        let messages = buffer.append(Data(combined))
+        let messages = await buffer.append(Data(combined))
 
         XCTAssertEqual(messages.count, 2)
     }
 
-    func testAppend_GarbageBeforeMessage_SkipsGarbage() {
+    func testAppend_GarbageBeforeMessage_SkipsGarbage() async {
         let garbage: [UInt8] = [0xFF, 0xFE, 0xFD]
         let validMessage: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0D, 0x0A]
         var combined = garbage
         combined.append(contentsOf: validMessage)
 
-        let messages = buffer.append(Data(combined))
+        let messages = await buffer.append(Data(combined))
 
         XCTAssertEqual(messages.count, 1)
         XCTAssertEqual(messages[0], Data(validMessage))
     }
 
-    func testAppend_GarbageBetweenMessages_SkipsGarbage() {
+    func testAppend_GarbageBetweenMessages_SkipsGarbage() async {
         let msg1: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0D, 0x0A]
         let garbage: [UInt8] = [0xFF, 0xFE]
         let msg2: [UInt8] = [0x2A, 0x02, 0x05, 0x64, 0x95, 0x0D, 0x0A]
@@ -445,44 +446,44 @@ final class MessageBufferTests: XCTestCase {
         combined.append(contentsOf: garbage)
         combined.append(contentsOf: msg2)
 
-        let messages = buffer.append(Data(combined))
+        let messages = await buffer.append(Data(combined))
 
         XCTAssertEqual(messages.count, 2)
     }
 
-    func testClear_EmptiesBuffer() {
+    func testClear_EmptiesBuffer() async {
         let partialData = Data([0x2A, 0x02, 0x05])
-        _ = buffer.append(partialData)
+        _ = await buffer.append(partialData)
 
-        buffer.clear()
+        await buffer.clear()
 
         // After clear, adding more data shouldn't complete the previous message
         let moreData = Data([0x55, 0x86, 0x0D, 0x0A])
-        let messages = buffer.append(moreData)
+        let messages = await buffer.append(moreData)
 
         XCTAssertEqual(messages.count, 0)
     }
 
-    func testAppend_ByteByByte_EventuallyReturnsMessage() {
+    func testAppend_ByteByByte_EventuallyReturnsMessage() async {
         let bytes: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0D, 0x0A]
 
         var allMessages: [Data] = []
         for byte in bytes {
-            let messages = buffer.append(Data([byte]))
+            let messages = await buffer.append(Data([byte]))
             allMessages.append(contentsOf: messages)
         }
 
         XCTAssertEqual(allMessages.count, 1)
     }
 
-    func testAppend_InvalidSuffix_SkipsInvalidFrame() {
+    func testAppend_InvalidSuffix_SkipsInvalidFrame() async {
         // Message with wrong suffix followed by valid message
         let invalid: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x00, 0x00]
         let valid: [UInt8] = [0x2A, 0x02, 0x05, 0x64, 0x95, 0x0D, 0x0A]
         var combined = invalid
         combined.append(contentsOf: valid)
 
-        let messages = buffer.append(Data(combined))
+        let messages = await buffer.append(Data(combined))
 
         // Should eventually find the valid message
         XCTAssertGreaterThanOrEqual(messages.count, 1)

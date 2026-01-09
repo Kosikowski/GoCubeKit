@@ -62,7 +62,8 @@ public struct StateDecoder: Sendable {
             centerOrientations.append(orientation)
         }
 
-        return CubeState(facelets: facelets, centerOrientations: centerOrientations)
+        // Use internal init since we've validated all the data above
+        return CubeState(validatedFacelets: facelets, centerOrientations: centerOrientations)
     }
 
     /// Encode a cube state back to protocol bytes

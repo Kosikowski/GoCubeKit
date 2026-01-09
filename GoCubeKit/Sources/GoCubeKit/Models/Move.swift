@@ -107,26 +107,27 @@ public struct MoveSequence: Equatable, Hashable, Sendable, CustomStringConvertib
     }
 
     /// Parse a move sequence from standard notation
+    /// Supports: R, R', R2, U, U', U2, etc.
     public static func parse(_ notation: String) -> MoveSequence? {
         var moves: [Move] = []
         let tokens = notation.split(separator: " ")
 
         for token in tokens {
-            guard let move = parseMove(String(token)) else {
+            let parsedMoves = parseMoves(String(token))
+            guard !parsedMoves.isEmpty else {
                 return nil
             }
-            moves.append(move)
+            moves.append(contentsOf: parsedMoves)
         }
 
         return MoveSequence(moves)
     }
 
-    private static func parseMove(_ token: String) -> Move? {
-        guard !token.isEmpty else { return nil }
+    /// Parse a single token into one or more moves (handles double moves like "R2")
+    private static func parseMoves(_ token: String) -> [Move] {
+        guard let faceChar = token.first else { return [] }
 
-        let faceChar = token.first!
         let face: CubeFace
-
         switch faceChar {
         case "R": face = .right
         case "L": face = .left
@@ -134,19 +135,17 @@ public struct MoveSequence: Equatable, Hashable, Sendable, CustomStringConvertib
         case "D": face = .down
         case "F": face = .front
         case "B": face = .back
-        default: return nil
+        default: return []
         }
 
-        let direction: MoveDirection
         if token.hasSuffix("'") || token.hasSuffix("'") {
-            direction = .counterclockwise
+            return [Move(face: face, direction: .counterclockwise)]
         } else if token.hasSuffix("2") {
-            // Double move - we'll represent as two moves
-            return Move(face: face, direction: .clockwise)
+            // Double move - return two clockwise moves
+            let move = Move(face: face, direction: .clockwise)
+            return [move, move]
         } else {
-            direction = .clockwise
+            return [Move(face: face, direction: .clockwise)]
         }
-
-        return Move(face: face, direction: direction)
     }
 }

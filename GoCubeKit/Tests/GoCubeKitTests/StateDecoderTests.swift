@@ -155,8 +155,8 @@ final class StateDecoderTests: XCTestCase {
         let payload = Data(Array(repeating: UInt8(0x00), count: 59))
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case StateDecoderError.invalidPayloadLength(let expected, let actual) = error else {
-                XCTFail("Expected invalidPayloadLength error")
+            guard case GoCubeError.parsing(.payloadLengthMismatch(let expected, let actual)) = error else {
+                XCTFail("Expected payloadLengthMismatch error")
                 return
             }
             XCTAssertEqual(expected, 60)
@@ -168,8 +168,8 @@ final class StateDecoderTests: XCTestCase {
         let payload = Data(Array(repeating: UInt8(0x00), count: 61))
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case StateDecoderError.invalidPayloadLength(let expected, let actual) = error else {
-                XCTFail("Expected invalidPayloadLength error")
+            guard case GoCubeError.parsing(.payloadLengthMismatch(let expected, let actual)) = error else {
+                XCTFail("Expected payloadLengthMismatch error")
                 return
             }
             XCTAssertEqual(expected, 60)
@@ -181,8 +181,8 @@ final class StateDecoderTests: XCTestCase {
         let payload = Data()
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case StateDecoderError.invalidPayloadLength(let expected, let actual) = error else {
-                XCTFail("Expected invalidPayloadLength error")
+            guard case GoCubeError.parsing(.payloadLengthMismatch(let expected, let actual)) = error else {
+                XCTFail("Expected payloadLengthMismatch error")
                 return
             }
             XCTAssertEqual(expected, 60)
@@ -197,7 +197,7 @@ final class StateDecoderTests: XCTestCase {
         let payload = Data(bytes)
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case StateDecoderError.invalidColorValue(let value, let position) = error else {
+            guard case GoCubeError.parsing(.invalidColorValue(let value, let position)) = error else {
                 XCTFail("Expected invalidColorValue error")
                 return
             }
@@ -213,7 +213,7 @@ final class StateDecoderTests: XCTestCase {
         let payload = Data(bytes)
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case StateDecoderError.invalidColorValue(let value, let position) = error else {
+            guard case GoCubeError.parsing(.invalidColorValue(let value, let position)) = error else {
                 XCTFail("Expected invalidColorValue error")
                 return
             }

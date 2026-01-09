@@ -6,8 +6,8 @@ import PackageDescription
 let package = Package(
     name: "GoCubeKit",
     platforms: [
-        .iOS(.v16),
-        .macOS(.v13)
+        .iOS(.v17),
+        .macOS(.v14)
     ],
     products: [
         .library(
@@ -21,7 +21,8 @@ let package = Package(
             dependencies: [],
             path: "Sources/GoCubeKit",
             swiftSettings: [
-                .enableExperimentalFeature("StrictConcurrency")
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("FullTypedThrows")
             ]
         ),
         .testTarget(
@@ -29,7 +30,8 @@ let package = Package(
             dependencies: ["GoCubeKit"],
             path: "Tests/GoCubeKitTests",
             swiftSettings: [
-                .enableExperimentalFeature("StrictConcurrency")
+                .enableExperimentalFeature("StrictConcurrency"),
+                .enableUpcomingFeature("FullTypedThrows")
             ]
         ),
     ]

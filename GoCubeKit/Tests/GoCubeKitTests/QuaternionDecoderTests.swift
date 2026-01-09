@@ -98,19 +98,21 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_Empty_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "")) { error in
-            guard case QuaternionDecoderError.emptyPayload = error else {
-                XCTFail("Expected emptyPayload error")
+            guard case GoCubeError.parsing(.invalidQuaternionFormat(let reason)) = error else {
+                XCTFail("Expected invalidQuaternionFormat error")
                 return
             }
+            XCTAssertEqual(reason, "Empty string")
         }
     }
 
     func testDecodeString_WhitespaceOnly_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "   ")) { error in
-            guard case QuaternionDecoderError.emptyPayload = error else {
-                XCTFail("Expected emptyPayload error")
+            guard case GoCubeError.parsing(.invalidQuaternionFormat(let reason)) = error else {
+                XCTFail("Expected invalidQuaternionFormat error")
                 return
             }
+            XCTAssertEqual(reason, "Empty string")
         }
     }
 
@@ -118,17 +120,18 @@ final class QuaternionDecoderTests: XCTestCase {
         let data = Data()
 
         XCTAssertThrowsError(try decoder.decode(data)) { error in
-            guard case QuaternionDecoderError.emptyPayload = error else {
-                XCTFail("Expected emptyPayload error")
+            guard case GoCubeError.parsing(.invalidQuaternionFormat(let reason)) = error else {
+                XCTFail("Expected invalidQuaternionFormat error")
                 return
             }
+            XCTAssertEqual(reason, "Empty payload")
         }
     }
 
     func testDecodeString_TooFewComponents_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "0.1#0.2#0.3")) { error in
-            guard case QuaternionDecoderError.invalidComponentCount(let expected, let actual) = error else {
-                XCTFail("Expected invalidComponentCount error")
+            guard case GoCubeError.parsing(.invalidQuaternionComponentCount(let expected, let actual)) = error else {
+                XCTFail("Expected invalidQuaternionComponentCount error")
                 return
             }
             XCTAssertEqual(expected, 4)
@@ -138,8 +141,8 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_TooManyComponents_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "0.1#0.2#0.3#0.4#0.5")) { error in
-            guard case QuaternionDecoderError.invalidComponentCount(let expected, let actual) = error else {
-                XCTFail("Expected invalidComponentCount error")
+            guard case GoCubeError.parsing(.invalidQuaternionComponentCount(let expected, let actual)) = error else {
+                XCTFail("Expected invalidQuaternionComponentCount error")
                 return
             }
             XCTAssertEqual(expected, 4)
@@ -149,8 +152,8 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_SingleComponent_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "0.5")) { error in
-            guard case QuaternionDecoderError.invalidComponentCount(let expected, let actual) = error else {
-                XCTFail("Expected invalidComponentCount error")
+            guard case GoCubeError.parsing(.invalidQuaternionComponentCount(let expected, let actual)) = error else {
+                XCTFail("Expected invalidQuaternionComponentCount error")
                 return
             }
             XCTAssertEqual(expected, 4)
@@ -160,55 +163,51 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_InvalidNumericX_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "abc#0.2#0.3#0.4")) { error in
-            guard case QuaternionDecoderError.invalidNumericValue(let component, let value) = error else {
-                XCTFail("Expected invalidNumericValue error")
+            guard case GoCubeError.parsing(.invalidQuaternionComponent(let component)) = error else {
+                XCTFail("Expected invalidQuaternionComponent error")
                 return
             }
-            XCTAssertEqual(component, "x")
-            XCTAssertEqual(value, "abc")
+            XCTAssertEqual(component, "abc")
         }
     }
 
     func testDecodeString_InvalidNumericY_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "0.1#abc#0.3#0.4")) { error in
-            guard case QuaternionDecoderError.invalidNumericValue(let component, let value) = error else {
-                XCTFail("Expected invalidNumericValue error")
+            guard case GoCubeError.parsing(.invalidQuaternionComponent(let component)) = error else {
+                XCTFail("Expected invalidQuaternionComponent error")
                 return
             }
-            XCTAssertEqual(component, "y")
-            XCTAssertEqual(value, "abc")
+            XCTAssertEqual(component, "abc")
         }
     }
 
     func testDecodeString_InvalidNumericZ_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "0.1#0.2#abc#0.4")) { error in
-            guard case QuaternionDecoderError.invalidNumericValue(let component, let value) = error else {
-                XCTFail("Expected invalidNumericValue error")
+            guard case GoCubeError.parsing(.invalidQuaternionComponent(let component)) = error else {
+                XCTFail("Expected invalidQuaternionComponent error")
                 return
             }
-            XCTAssertEqual(component, "z")
-            XCTAssertEqual(value, "abc")
+            XCTAssertEqual(component, "abc")
         }
     }
 
     func testDecodeString_InvalidNumericW_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "0.1#0.2#0.3#abc")) { error in
-            guard case QuaternionDecoderError.invalidNumericValue(let component, let value) = error else {
-                XCTFail("Expected invalidNumericValue error")
+            guard case GoCubeError.parsing(.invalidQuaternionComponent(let component)) = error else {
+                XCTFail("Expected invalidQuaternionComponent error")
                 return
             }
-            XCTAssertEqual(component, "w")
-            XCTAssertEqual(value, "abc")
+            XCTAssertEqual(component, "abc")
         }
     }
 
     func testDecodeString_EmptyComponentX_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "#0.2#0.3#0.4")) { error in
-            guard case QuaternionDecoderError.invalidNumericValue(let component, _) = error else {
-                XCTFail("Expected invalidNumericValue error")
+            guard case GoCubeError.parsing(.invalidQuaternionComponent(let component)) = error else {
+                XCTFail("Expected invalidQuaternionComponent error")
                 return
             }
-            XCTAssertEqual(component, "x")
+            XCTAssertEqual(component, "")
         }
     }
 
@@ -217,8 +216,8 @@ final class QuaternionDecoderTests: XCTestCase {
         let data = Data([0xFF, 0xFE])
 
         XCTAssertThrowsError(try decoder.decode(data)) { error in
-            guard case QuaternionDecoderError.invalidFormat = error else {
-                XCTFail("Expected invalidFormat error")
+            guard case GoCubeError.parsing(.invalidQuaternionFormat) = error else {
+                XCTFail("Expected invalidQuaternionFormat error")
                 return
             }
         }
@@ -502,56 +501,59 @@ final class QuaternionModelTests: XCTestCase {
 
 final class QuaternionSmootherTests: XCTestCase {
 
-    func testSmoother_FirstUpdate() {
+    func testSmoother_FirstUpdate() async {
         let smoother = QuaternionSmoother(smoothingFactor: 0.5)
         let input = Quaternion(x: 0.5, y: 0.5, z: 0.5, w: 0.5)
 
-        let result = smoother.update(input)
+        let result = await smoother.update(input)
 
         XCTAssertEqual(result, input)
     }
 
-    func testSmoother_SecondUpdate() {
+    func testSmoother_SecondUpdate() async {
         let smoother = QuaternionSmoother(smoothingFactor: 0.5)
         let q1 = Quaternion.identity
         let q2 = Quaternion(x: 0.5, y: 0.5, z: 0.5, w: 0.5)
 
-        _ = smoother.update(q1)
-        let result = smoother.update(q2)
+        _ = await smoother.update(q1)
+        let result = await smoother.update(q2)
 
         // Result should be somewhere between q1 and q2
         XCTAssertFalse(result.isApproximatelyEqual(to: q1, tolerance: 0.01))
         XCTAssertFalse(result.isApproximatelyEqual(to: q2, tolerance: 0.01))
     }
 
-    func testSmoother_Reset() {
+    func testSmoother_Reset() async {
         let smoother = QuaternionSmoother(smoothingFactor: 0.5)
         let q = Quaternion(x: 0.5, y: 0.5, z: 0.5, w: 0.5)
 
-        _ = smoother.update(q)
-        smoother.reset()
+        _ = await smoother.update(q)
+        await smoother.reset()
 
-        XCTAssertNil(smoother.current)
+        let current = await smoother.current
+        XCTAssertNil(current)
     }
 
-    func testSmoother_Current() {
+    func testSmoother_Current() async {
         let smoother = QuaternionSmoother(smoothingFactor: 0.5)
 
-        XCTAssertNil(smoother.current)
+        let initialCurrent = await smoother.current
+        XCTAssertNil(initialCurrent)
 
         let q = Quaternion.identity
-        _ = smoother.update(q)
+        _ = await smoother.update(q)
 
-        XCTAssertNotNil(smoother.current)
+        let updatedCurrent = await smoother.current
+        XCTAssertNotNil(updatedCurrent)
     }
 
-    func testSmoother_SmoothingFactorZero() {
+    func testSmoother_SmoothingFactorZero() async {
         let smoother = QuaternionSmoother(smoothingFactor: 0)
         let q1 = Quaternion.identity
         let q2 = Quaternion(x: 0.5, y: 0.5, z: 0.5, w: 0.5)
 
-        _ = smoother.update(q1)
-        let result = smoother.update(q2)
+        _ = await smoother.update(q1)
+        let result = await smoother.update(q2)
 
         // With smoothing factor 0, should snap to new value
         XCTAssertTrue(result.isApproximatelyEqual(to: q2, tolerance: 0.01))
@@ -562,44 +564,47 @@ final class QuaternionSmootherTests: XCTestCase {
 
 final class OrientationManagerTests: XCTestCase {
 
-    func testOrientationManager_NoHome() {
+    func testOrientationManager_NoHome() async {
         let manager = OrientationManager()
         let q = Quaternion(x: 0.5, y: 0.5, z: 0.5, w: 0.5)
 
-        let result = manager.relativeOrientation(q)
+        let result = await manager.relativeOrientation(q)
 
         XCTAssertEqual(result, q)
     }
 
-    func testOrientationManager_SetHome() {
+    func testOrientationManager_SetHome() async {
         let manager = OrientationManager()
         let home = Quaternion(x: 0.5, y: 0.5, z: 0.5, w: 0.5)
 
-        manager.setHome(home)
+        await manager.setHome(home)
 
-        XCTAssertTrue(manager.hasHome)
+        let hasHome = await manager.hasHome
+        XCTAssertTrue(hasHome)
     }
 
-    func testOrientationManager_RelativeToHome() {
+    func testOrientationManager_RelativeToHome() async {
         let manager = OrientationManager()
         let home = Quaternion(x: 0.5, y: 0.5, z: 0.5, w: 0.5)
 
-        manager.setHome(home)
+        await manager.setHome(home)
 
         // Same orientation as home should give identity
-        let result = manager.relativeOrientation(home)
+        let result = await manager.relativeOrientation(home)
 
         XCTAssertTrue(result.isApproximatelyEqual(to: .identity, tolerance: 0.01))
     }
 
-    func testOrientationManager_ClearHome() {
+    func testOrientationManager_ClearHome() async {
         let manager = OrientationManager()
         let home = Quaternion.identity
 
-        manager.setHome(home)
-        XCTAssertTrue(manager.hasHome)
+        await manager.setHome(home)
+        let hasHomeAfterSet = await manager.hasHome
+        XCTAssertTrue(hasHomeAfterSet)
 
-        manager.clearHome()
-        XCTAssertFalse(manager.hasHome)
+        await manager.clearHome()
+        let hasHomeAfterClear = await manager.hasHome
+        XCTAssertFalse(hasHomeAfterClear)
     }
 }

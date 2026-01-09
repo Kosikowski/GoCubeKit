@@ -55,6 +55,21 @@ public final class GoCubeManager {
     /// Whether currently scanning for devices
     public private(set) var isScanning: Bool = false
 
+    /// Last connected device (for auto-reconnection)
+    private var lastConnectedDevice: DiscoveredDevice?
+
+    /// Current reconnection attempt count
+    private var reconnectAttempts: Int = 0
+
+    /// Whether we're currently attempting to reconnect
+    private var isReconnecting: Bool = false
+
+    /// Flag to prevent reconnection when user explicitly disconnects
+    private var shouldReconnect: Bool = true
+
+    /// Task for reconnection attempts
+    private var reconnectTask: Task<Void, Never>?
+
     // MARK: - Initialization
 
     /// Create a GoCubeManager with default communicator and configuration
@@ -120,9 +135,71 @@ public final class GoCubeManager {
             guard let self = self else { return }
             for await state in self.communicator.connectionStateChanges {
                 if state == .disconnected {
-                    self.connectedCube = nil
+                    self.handleDisconnection()
                 }
             }
+        }
+    }
+
+    /// Handle disconnection event
+    private func handleDisconnection() {
+        let wasConnected = connectedCube != nil
+        connectedCube = nil
+
+        // Attempt reconnection if configured and not explicitly disconnected
+        if wasConnected && configuration.autoReconnect && shouldReconnect {
+            attemptReconnection()
+        }
+    }
+
+    /// Attempt to reconnect to the last connected device
+    private func attemptReconnection() {
+        guard let device = lastConnectedDevice else {
+            logger.info("No last connected device for reconnection")
+            return
+        }
+
+        guard !isReconnecting else {
+            logger.debug("Already attempting reconnection")
+            return
+        }
+
+        let maxAttempts = configuration.maxReconnectAttempts
+
+        // Check if we've exceeded max attempts (0 = unlimited)
+        if maxAttempts > 0 && reconnectAttempts >= maxAttempts {
+            logger.info("Max reconnection attempts (\(maxAttempts)) reached")
+            reconnectAttempts = 0
+            return
+        }
+
+        isReconnecting = true
+        reconnectAttempts += 1
+
+        logger.info("Attempting reconnection (attempt \(self.reconnectAttempts))")
+
+        reconnectTask = Task { [weak self] in
+            guard let self = self else { return }
+
+            // Wait before attempting reconnection
+            try? await Task.sleep(for: self.configuration.reconnectDelay)
+
+            // Check if we should still reconnect
+            guard self.shouldReconnect && self.connectedCube == nil else {
+                self.isReconnecting = false
+                return
+            }
+
+            do {
+                _ = try await self.connect(to: device)
+                self.logger.info("Reconnection successful")
+                self.reconnectAttempts = 0
+            } catch {
+                self.logger.error("Reconnection failed: \(error.localizedDescription)")
+                // Will try again on next disconnection event or we could retry here
+            }
+
+            self.isReconnecting = false
         }
     }
 
@@ -186,6 +263,11 @@ public final class GoCubeManager {
             cube.startListening()
             connectedCube = cube
 
+            // Store for potential reconnection
+            lastConnectedDevice = device
+            shouldReconnect = true
+            reconnectAttempts = 0
+
             // Request initial state
             try? cube.requestState()
             try? cube.requestBattery()
@@ -206,10 +288,23 @@ public final class GoCubeManager {
     }
 
     /// Disconnect from the current cube
-    public func disconnect() {
+    /// - Parameter allowReconnect: If false, prevents automatic reconnection (default: false)
+    public func disconnect(allowReconnect: Bool = false) {
+        // Cancel any pending reconnection
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        isReconnecting = false
+
+        // Prevent auto-reconnection unless explicitly allowed
+        shouldReconnect = allowReconnect
+
         connectedCube?.stopListening()
         communicator.disconnect()
         connectedCube = nil
+
+        if !allowReconnect {
+            reconnectAttempts = 0
+        }
     }
 
     /// Connect to the first available GoCube

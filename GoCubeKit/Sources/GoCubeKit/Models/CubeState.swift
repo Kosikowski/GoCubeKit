@@ -1,5 +1,13 @@
 import Foundation
 
+/// Errors that can occur when creating or accessing cube state
+public enum CubeStateError: Error, Equatable, Sendable {
+    case invalidFaceCount(expected: Int, actual: Int)
+    case invalidStickerCount(face: Int, expected: Int, actual: Int)
+    case invalidOrientationCount(expected: Int, actual: Int)
+    case invalidPosition(position: Int, validRange: ClosedRange<Int>)
+}
+
 /// Represents the complete state of a Rubik's cube (54 stickers)
 public struct CubeState: Equatable, Hashable, Sendable {
     /// All 54 facelets organized by face (6 faces × 9 stickers)
@@ -9,22 +17,38 @@ public struct CubeState: Equatable, Hashable, Sendable {
     /// Orientation values for each center piece (6 values)
     public let centerOrientations: [UInt8]
 
-    /// Create a cube state from facelet data
-    public init(facelets: [[CubeColor]], centerOrientations: [UInt8] = Array(repeating: 0, count: 6)) {
-        precondition(facelets.count == 6, "Must have exactly 6 faces")
-        precondition(facelets.allSatisfy { $0.count == 9 }, "Each face must have 9 stickers")
-        precondition(centerOrientations.count == 6, "Must have 6 center orientations")
+    /// Create a cube state from facelet data (throwing)
+    public init(facelets: [[CubeColor]], centerOrientations: [UInt8] = Array(repeating: 0, count: 6)) throws {
+        guard facelets.count == 6 else {
+            throw CubeStateError.invalidFaceCount(expected: 6, actual: facelets.count)
+        }
+        for (index, face) in facelets.enumerated() {
+            guard face.count == 9 else {
+                throw CubeStateError.invalidStickerCount(face: index, expected: 9, actual: face.count)
+            }
+        }
+        guard centerOrientations.count == 6 else {
+            throw CubeStateError.invalidOrientationCount(expected: 6, actual: centerOrientations.count)
+        }
 
         self.facelets = facelets
+        self.centerOrientations = centerOrientations
+    }
+
+    /// Create a cube state from validated facelet data (internal use)
+    /// - Note: Caller must ensure data is valid (6 faces, 9 stickers each, 6 orientations)
+    internal init(validatedFacelets: [[CubeColor]], centerOrientations: [UInt8]) {
+        self.facelets = validatedFacelets
         self.centerOrientations = centerOrientations
     }
 
     /// Create a solved cube state
     public static var solved: CubeState {
         CubeState(
-            facelets: CubeFace.allCases.map { face in
+            validatedFacelets: CubeFace.allCases.map { face in
                 Array(repeating: face.solvedCenterColor, count: 9)
-            }
+            },
+            centerOrientations: Array(repeating: 0, count: 6)
         )
     }
 
@@ -41,8 +65,9 @@ public struct CubeState: Equatable, Hashable, Sendable {
     }
 
     /// Get the color at a specific position
-    public func color(at face: CubeFace, position: Int) -> CubeColor {
-        precondition(position >= 0 && position < 9, "Position must be 0-8")
+    /// - Returns: The color at the position, or nil if position is out of range (0-8)
+    public func color(at face: CubeFace, position: Int) -> CubeColor? {
+        guard position >= 0 && position < 9 else { return nil }
         return facelets[face.rawValue][position]
     }
 
@@ -155,22 +180,32 @@ extension CubeState {
             self.centerOrientations = state.centerOrientations
         }
 
-        public mutating func setColor(_ color: CubeColor, at face: CubeFace, position: Int) {
-            precondition(position >= 0 && position < 9)
+        /// Set a color at a specific position
+        /// - Returns: true if position was valid (0-8), false otherwise
+        @discardableResult
+        public mutating func setColor(_ color: CubeColor, at face: CubeFace, position: Int) -> Bool {
+            guard position >= 0 && position < 9 else { return false }
             facelets[face.rawValue][position] = color
+            return true
         }
 
-        public mutating func setFace(_ face: CubeFace, colors: [CubeColor]) {
-            precondition(colors.count == 9)
+        /// Set all colors for a face
+        /// - Returns: true if colors array had exactly 9 elements, false otherwise
+        @discardableResult
+        public mutating func setFace(_ face: CubeFace, colors: [CubeColor]) -> Bool {
+            guard colors.count == 9 else { return false }
             facelets[face.rawValue] = colors
+            return true
         }
 
         public mutating func setCenterOrientation(_ orientation: UInt8, for face: CubeFace) {
             centerOrientations[face.rawValue] = orientation
         }
 
+        /// Build the cube state
+        /// - Note: Always succeeds since Builder maintains valid state internally
         public func build() -> CubeState {
-            CubeState(facelets: facelets, centerOrientations: centerOrientations)
+            CubeState(validatedFacelets: facelets, centerOrientations: centerOrientations)
         }
     }
 }

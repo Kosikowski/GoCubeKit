@@ -139,7 +139,7 @@ final class MoveDecoderTests: XCTestCase {
 
     func testDecodeMove_InvalidCode_ThrowsError() {
         XCTAssertThrowsError(try decoder.decodeMove(code: 0x0C, centerOrientation: 0x00)) { error in
-            guard case MoveDecoderError.invalidMoveCode(let code) = error else {
+            guard case GoCubeError.parsing(.invalidMoveCode(let code)) = error else {
                 XCTFail("Expected invalidMoveCode error")
                 return
             }
@@ -149,7 +149,7 @@ final class MoveDecoderTests: XCTestCase {
 
     func testDecodeMove_MaxInvalidCode_ThrowsError() {
         XCTAssertThrowsError(try decoder.decodeMove(code: 0xFF, centerOrientation: 0x00)) { error in
-            guard case MoveDecoderError.invalidMoveCode(let code) = error else {
+            guard case GoCubeError.parsing(.invalidMoveCode(let code)) = error else {
                 XCTFail("Expected invalidMoveCode error")
                 return
             }
@@ -197,8 +197,8 @@ final class MoveDecoderTests: XCTestCase {
         let payload = Data()
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case MoveDecoderError.emptyPayload = error else {
-                XCTFail("Expected emptyPayload error")
+            guard case GoCubeError.parsing(.emptyMovePayload) = error else {
+                XCTFail("Expected emptyMovePayload error")
                 return
             }
         }
@@ -208,8 +208,8 @@ final class MoveDecoderTests: XCTestCase {
         let payload = Data([0x08, 0x00, 0x04]) // 3 bytes (odd)
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case MoveDecoderError.oddPayloadLength(let length) = error else {
-                XCTFail("Expected oddPayloadLength error")
+            guard case GoCubeError.parsing(.oddMovePayloadLength(let length)) = error else {
+                XCTFail("Expected oddMovePayloadLength error")
                 return
             }
             XCTAssertEqual(length, 3)
@@ -220,8 +220,8 @@ final class MoveDecoderTests: XCTestCase {
         let payload = Data([0x08])
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case MoveDecoderError.oddPayloadLength = error else {
-                XCTFail("Expected oddPayloadLength error")
+            guard case GoCubeError.parsing(.oddMovePayloadLength) = error else {
+                XCTFail("Expected oddMovePayloadLength error")
                 return
             }
         }

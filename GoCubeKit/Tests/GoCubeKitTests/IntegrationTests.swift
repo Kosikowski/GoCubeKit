@@ -77,7 +77,7 @@ final class IntegrationTests: XCTestCase {
 
     func testFullPipeline_CubeStateMessage() throws {
         // Build a solved cube state message
-        var statePayload = Array(StateDecoder.solvedPayload)
+        let statePayload = Array(StateDecoder.solvedPayload)
 
         // Build the message frame
         var frameBytes: [UInt8] = [0x2A, UInt8(statePayload.count + 1), 0x02]
@@ -128,7 +128,7 @@ final class IntegrationTests: XCTestCase {
 
     // MARK: - Message Buffer Integration Tests
 
-    func testMessageBuffer_FragmentedMessages() throws {
+    func testMessageBuffer_FragmentedMessages() async throws {
         let buffer = MessageBuffer()
 
         // Build two complete messages
@@ -141,13 +141,13 @@ final class IntegrationTests: XCTestCase {
         let fragment3 = Data(msg2Bytes[4...])
 
         // Process fragments
-        let result1 = buffer.append(fragment1)
+        let result1 = await buffer.append(fragment1)
         XCTAssertEqual(result1.count, 0)
 
-        let result2 = buffer.append(fragment2)
+        let result2 = await buffer.append(fragment2)
         XCTAssertEqual(result2.count, 1)
 
-        let result3 = buffer.append(fragment3)
+        let result3 = await buffer.append(fragment3)
         XCTAssertEqual(result3.count, 1)
 
         // Verify messages can be parsed
@@ -158,7 +158,7 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(message2.type, .battery)
     }
 
-    func testMessageBuffer_RapidFireMessages() throws {
+    func testMessageBuffer_RapidFireMessages() async throws {
         let buffer = MessageBuffer()
 
         // Simulate rapid-fire rotation events
@@ -169,12 +169,12 @@ final class IntegrationTests: XCTestCase {
         }
 
         // Process all at once
-        let messages = buffer.append(allData)
+        let messages = await buffer.append(allData)
 
         XCTAssertEqual(messages.count, 4)
 
         // Verify each message
-        for (index, msgData) in messages.enumerated() {
+        for (_, msgData) in messages.enumerated() {
             let message = try messageParser.parse(msgData)
             XCTAssertEqual(message.type, .rotation)
 
@@ -185,7 +185,7 @@ final class IntegrationTests: XCTestCase {
 
     // MARK: - Error Recovery Tests
 
-    func testErrorRecovery_CorruptedMessageFollowedByValid() throws {
+    func testErrorRecovery_CorruptedMessageFollowedByValid() async throws {
         let buffer = MessageBuffer()
 
         // Corrupted message (bad suffix) followed by valid message
@@ -195,7 +195,7 @@ final class IntegrationTests: XCTestCase {
         var combined = corrupted
         combined.append(contentsOf: valid)
 
-        let messages = buffer.append(combined)
+        let messages = await buffer.append(combined)
 
         // Should recover and find the valid message
         XCTAssertGreaterThanOrEqual(messages.count, 1)
@@ -263,7 +263,7 @@ final class IntegrationTests: XCTestCase {
         XCTAssertEqual(sequence.count, 10)
     }
 
-    func testScenario_OrientationTracking() throws {
+    func testScenario_OrientationTracking() async throws {
         // Simulate orientation updates coming in at 15 Hz
         let smoother = QuaternionSmoother(smoothingFactor: 0.5)
 
@@ -282,7 +282,7 @@ final class IntegrationTests: XCTestCase {
             let message = try messageParser.parse(msgData)
             let quaternion = try quaternionDecoder.decode(message.payload)
 
-            let smoothed = smoother.update(quaternion)
+            let smoothed = await smoother.update(quaternion)
             lastSmoothed = smoothed
         }
 
@@ -378,37 +378,37 @@ final class BLEConstantsTests: XCTestCase {
 
 final class ErrorTypeTests: XCTestCase {
 
-    func testMessageParserError_Equatable() {
-        let error1 = MessageParserError.messageTooShort(length: 3)
-        let error2 = MessageParserError.messageTooShort(length: 3)
-        let error3 = MessageParserError.messageTooShort(length: 4)
+    func testGoCubeParsingError_MessageTooShort_Equatable() {
+        let error1 = GoCubeError.parsing(.messageTooShort(length: 3))
+        let error2 = GoCubeError.parsing(.messageTooShort(length: 3))
+        let error3 = GoCubeError.parsing(.messageTooShort(length: 4))
 
         XCTAssertEqual(error1, error2)
         XCTAssertNotEqual(error1, error3)
     }
 
-    func testMoveDecoderError_Equatable() {
-        let error1 = MoveDecoderError.invalidMoveCode(code: 0x0C)
-        let error2 = MoveDecoderError.invalidMoveCode(code: 0x0C)
-        let error3 = MoveDecoderError.invalidMoveCode(code: 0x0D)
+    func testGoCubeParsingError_InvalidMoveCode_Equatable() {
+        let error1 = GoCubeError.parsing(.invalidMoveCode(code: 0x0C))
+        let error2 = GoCubeError.parsing(.invalidMoveCode(code: 0x0C))
+        let error3 = GoCubeError.parsing(.invalidMoveCode(code: 0x0D))
 
         XCTAssertEqual(error1, error2)
         XCTAssertNotEqual(error1, error3)
     }
 
-    func testStateDecoderError_Equatable() {
-        let error1 = StateDecoderError.invalidPayloadLength(expected: 60, actual: 59)
-        let error2 = StateDecoderError.invalidPayloadLength(expected: 60, actual: 59)
-        let error3 = StateDecoderError.invalidPayloadLength(expected: 60, actual: 58)
+    func testGoCubeParsingError_PayloadLengthMismatch_Equatable() {
+        let error1 = GoCubeError.parsing(.payloadLengthMismatch(expected: 60, actual: 59))
+        let error2 = GoCubeError.parsing(.payloadLengthMismatch(expected: 60, actual: 59))
+        let error3 = GoCubeError.parsing(.payloadLengthMismatch(expected: 60, actual: 58))
 
         XCTAssertEqual(error1, error2)
         XCTAssertNotEqual(error1, error3)
     }
 
-    func testQuaternionDecoderError_Equatable() {
-        let error1 = QuaternionDecoderError.invalidComponentCount(expected: 4, actual: 3)
-        let error2 = QuaternionDecoderError.invalidComponentCount(expected: 4, actual: 3)
-        let error3 = QuaternionDecoderError.invalidComponentCount(expected: 4, actual: 5)
+    func testGoCubeParsingError_InvalidQuaternionComponentCount_Equatable() {
+        let error1 = GoCubeError.parsing(.invalidQuaternionComponentCount(expected: 4, actual: 3))
+        let error2 = GoCubeError.parsing(.invalidQuaternionComponentCount(expected: 4, actual: 3))
+        let error3 = GoCubeError.parsing(.invalidQuaternionComponentCount(expected: 4, actual: 5))
 
         XCTAssertEqual(error1, error2)
         XCTAssertNotEqual(error1, error3)
