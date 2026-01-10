@@ -1,11 +1,13 @@
 import Foundation
 @preconcurrency import CoreBluetooth
+import Observation
 import os.log
 
 /// Manager for discovering and connecting to GoCube devices
-/// Isolated to CubeActor for thread-safe state management
-@CubeActor
-public final class GoCubeManager {
+/// Uses @Observable for reactive state updates in SwiftUI
+@Observable
+@MainActor
+public final class GoCubeManager: Sendable {
 
     // MARK: - Shared Instance (optional convenience)
 
@@ -29,31 +31,31 @@ public final class GoCubeManager {
     private var bluetoothStateListenerTask: Task<Void, Never>?
     private var connectionStateListenerTask: Task<Void, Never>?
 
-    // MARK: - Public AsyncStreams (modern Swift concurrency API)
-
-    /// Stream of discovered devices
-    public let deviceDiscoveries: AsyncStream<[DiscoveredDevice]>
-    private let deviceDiscoveriesContinuation: AsyncStream<[DiscoveredDevice]>.Continuation
-
-    /// Stream of successful connections
-    public let connections: AsyncStream<GoCube>
-    private let connectionsContinuation: AsyncStream<GoCube>.Continuation
-
-    /// Stream of connection failures
-    public let connectionFailures: AsyncStream<GoCubeError>
-    private let connectionFailuresContinuation: AsyncStream<GoCubeError>.Continuation
-
-    /// Stream of Bluetooth state changes
-    public let bluetoothStateUpdates: AsyncStream<CBManagerState>
-    private let bluetoothStateUpdatesContinuation: AsyncStream<CBManagerState>.Continuation
-
-    // MARK: - State (protected by CubeActor isolation)
+    // MARK: - Observable State
 
     /// Currently connected cube
     public private(set) var connectedCube: GoCube?
 
     /// Whether currently scanning for devices
     public private(set) var isScanning: Bool = false
+
+    /// Discovered devices (observable array for SwiftUI)
+    public private(set) var discoveredDevices: [DiscoveredDevice] = []
+
+    /// Current Bluetooth state
+    public private(set) var bluetoothState: CBManagerState = .unknown
+
+    /// Whether Bluetooth is ready for use
+    public var isBluetoothReady: Bool {
+        bluetoothState == .poweredOn
+    }
+
+    /// Whether connected to a cube
+    public var isConnected: Bool {
+        connectedCube != nil
+    }
+
+    // MARK: - Reconnection State
 
     /// Last connected device (for auto-reconnection)
     private var lastConnectedDevice: DiscoveredDevice?
@@ -69,6 +71,16 @@ public final class GoCubeManager {
 
     /// Task for reconnection attempts
     private var reconnectTask: Task<Void, Never>?
+
+    // MARK: - Event Streams (for external consumers)
+
+    /// Stream of successful connections
+    public let connections: AsyncStream<GoCube>
+    private let connectionsContinuation: AsyncStream<GoCube>.Continuation
+
+    /// Stream of connection failures
+    public let connectionFailures: AsyncStream<GoCubeError>
+    private let connectionFailuresContinuation: AsyncStream<GoCubeError>.Continuation
 
     // MARK: - Initialization
 
@@ -87,52 +99,37 @@ public final class GoCubeManager {
         self.communicator = communicator
         self.configuration = configuration
 
-        // Initialize AsyncStreams
-        var discoveriesCont: AsyncStream<[DiscoveredDevice]>.Continuation!
-        deviceDiscoveries = AsyncStream { discoveriesCont = $0 }
-        deviceDiscoveriesContinuation = discoveriesCont
-
-        var connectionsCont: AsyncStream<GoCube>.Continuation!
-        connections = AsyncStream { connectionsCont = $0 }
-        connectionsContinuation = connectionsCont
-
-        var failuresCont: AsyncStream<GoCubeError>.Continuation!
-        connectionFailures = AsyncStream { failuresCont = $0 }
-        connectionFailuresContinuation = failuresCont
-
-        var btStateCont: AsyncStream<CBManagerState>.Continuation!
-        bluetoothStateUpdates = AsyncStream { btStateCont = $0 }
-        bluetoothStateUpdatesContinuation = btStateCont
+        // Initialize AsyncStreams using makeStream (iOS 17+)
+        (connections, connectionsContinuation) = AsyncStream.makeStream(of: GoCube.self)
+        (connectionFailures, connectionFailuresContinuation) = AsyncStream.makeStream(of: GoCubeError.self)
     }
 
     deinit {
-        deviceDiscoveriesContinuation.finish()
         connectionsContinuation.finish()
         connectionFailuresContinuation.finish()
-        bluetoothStateUpdatesContinuation.finish()
     }
 
-    /// Start listening to BLE streams and forwarding to public AsyncStreams
+    /// Start listening to BLE streams and updating observable state
     public func startListening() {
         // Listen for device discoveries
         discoveryListenerTask = Task { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
             for await devices in self.communicator.discoveries {
-                self.deviceDiscoveriesContinuation.yield(devices)
+                self.discoveredDevices = devices
             }
         }
 
         // Listen for Bluetooth state changes
         bluetoothStateListenerTask = Task { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
             for await state in self.communicator.bluetoothStateChanges {
-                self.bluetoothStateUpdatesContinuation.yield(state)
+                self.bluetoothState = state
             }
         }
 
         // Listen for connection state changes
         connectionStateListenerTask = Task { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
             for await state in self.communicator.connectionStateChanges {
                 if state == .disconnected {
                     self.handleDisconnection()
@@ -179,7 +176,7 @@ public final class GoCubeManager {
         logger.info("Attempting reconnection (attempt \(self.reconnectAttempts))")
 
         reconnectTask = Task { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
 
             // Wait before attempting reconnection
             try? await Task.sleep(for: self.configuration.reconnectDelay)
@@ -196,7 +193,6 @@ public final class GoCubeManager {
                 self.reconnectAttempts = 0
             } catch {
                 self.logger.error("Reconnection failed: \(error.localizedDescription)")
-                // Will try again on next disconnection event or we could retry here
             }
 
             self.isReconnecting = false
@@ -211,28 +207,6 @@ public final class GoCubeManager {
         bluetoothStateListenerTask = nil
         connectionStateListenerTask?.cancel()
         connectionStateListenerTask = nil
-    }
-
-    // MARK: - Public API
-
-    /// Current Bluetooth state
-    public var bluetoothState: CBManagerState {
-        communicator.bluetoothState
-    }
-
-    /// Whether Bluetooth is ready for use
-    public var isBluetoothReady: Bool {
-        communicator.isBluetoothReady
-    }
-
-    /// Get discovered devices
-    public var discoveredDevices: [DiscoveredDevice] {
-        communicator.discoveredDevices
-    }
-
-    /// Whether connected to a cube
-    public var isConnected: Bool {
-        connectedCube != nil
     }
 
     // MARK: - Scanning
@@ -255,11 +229,18 @@ public final class GoCubeManager {
     /// - Parameter device: The device to connect to
     /// - Returns: The connected GoCube instance
     @discardableResult
-    public func connect(to device: DiscoveredDevice) async throws -> GoCube {
+    public func connect(to device: DiscoveredDevice) async throws(GoCubeError) -> GoCube {
         do {
+            // Create CubeProcessor for processing with configured smoothing factor
+            await communicator.createProcessor(smoothingFactor: configuration.quaternionSmoothingFactor)
+
             try await communicator.connect(to: device)
 
-            let cube = GoCube(device: device, communicator: communicator, configuration: configuration)
+            guard let processor = communicator.processor else {
+                throw GoCubeError.connectionFailed("Failed to create cube processor")
+            }
+
+            let cube = GoCube(device: device, communicator: communicator, processor: processor, configuration: configuration)
             cube.startListening()
             connectedCube = cube
 
@@ -278,12 +259,14 @@ public final class GoCubeManager {
 
             return cube
         } catch let error as GoCubeError {
+            communicator.destroyProcessor()
             connectionFailuresContinuation.yield(error)
             throw error
         } catch {
-            let goCubeError = GoCubeError.connectionFailed(error.localizedDescription)
-            connectionFailuresContinuation.yield(goCubeError)
-            throw goCubeError
+            communicator.destroyProcessor()
+            let cubeError = GoCubeError.connectionFailed(error.localizedDescription)
+            connectionFailuresContinuation.yield(cubeError)
+            throw cubeError
         }
     }
 
@@ -300,6 +283,7 @@ public final class GoCubeManager {
 
         connectedCube?.stopListening()
         communicator.disconnect()
+        communicator.destroyProcessor()
         connectedCube = nil
 
         if !allowReconnect {
@@ -311,33 +295,42 @@ public final class GoCubeManager {
     /// Uses configuration.scanTimeout for timeout duration
     /// - Returns: The connected GoCube instance
     @discardableResult
-    public func connectToFirstAvailable() async throws -> GoCube {
+    public func connectToFirstAvailable() async throws(GoCubeError) -> GoCube {
         startScanning()
 
         // Wait for a device to be discovered with timeout
-        let device: DiscoveredDevice = try await withThrowingTaskGroup(of: DiscoveredDevice.self) { group in
-            // Task to wait for device discovery
-            group.addTask {
-                for await devices in self.communicator.discoveries {
-                    if let device = devices.first {
-                        return device
+        let device: DiscoveredDevice
+        do {
+            device = try await withThrowingTaskGroup(of: DiscoveredDevice.self) { group in
+                // Task to wait for device discovery
+                group.addTask {
+                    for await devices in self.communicator.discoveries {
+                        if let device = devices.first {
+                            return device
+                        }
                     }
+                    throw GoCubeError.connection(.deviceNotFound)
                 }
-                throw GoCubeError.connection(.deviceNotFound)
-            }
 
-            // Task for timeout
-            group.addTask {
-                try await Task.sleep(for: self.configuration.scanTimeout)
-                throw GoCubeError.timeout
-            }
+                // Task for timeout
+                group.addTask {
+                    try await Task.sleep(for: self.configuration.scanTimeout)
+                    throw GoCubeError.timeout
+                }
 
-            // Return first result (either device found or timeout)
-            guard let result = try await group.next() else {
-                throw GoCubeError.timeout
+                // Return first result (either device found or timeout)
+                guard let result = try await group.next() else {
+                    throw GoCubeError.timeout
+                }
+                group.cancelAll()
+                return result
             }
-            group.cancelAll()
-            return result
+        } catch let error as GoCubeError {
+            stopScanning()
+            throw error
+        } catch {
+            stopScanning()
+            throw .connectionFailed(error.localizedDescription)
         }
 
         stopScanning()

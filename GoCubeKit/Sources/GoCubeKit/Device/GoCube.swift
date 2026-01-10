@@ -1,10 +1,13 @@
 import Foundation
+import Observation
 import os.log
 
 /// Represents a connected GoCube device
-/// Isolated to CubeActor for thread-safe state management
-@CubeActor
-public final class GoCube {
+/// Uses @Observable for reactive state updates in SwiftUI
+/// All heavy processing is done by BLEActor off MainActor
+@Observable
+@MainActor
+public final class GoCube: Identifiable, Sendable {
 
     // MARK: - Properties
 
@@ -22,22 +25,18 @@ public final class GoCube {
     /// BLE communicator
     private let communicator: BLECommunicator
 
-    /// Message decoders
-    private let moveDecoder = MoveDecoder()
-    private let stateDecoder = StateDecoder()
-    private let quaternionDecoder = QuaternionDecoder()
+    /// Cube processor (handles all decoding on @CubeActor, off MainActor)
+    private let processor: CubeProcessor
 
-    /// Quaternion smoother for display
-    private let quaternionSmoother: QuaternionSmoother
-
-    /// Orientation manager for relative orientation
-    public let orientationManager = OrientationManager()
-
-    /// Task for listening to message stream
-    private var messageListenerTask: Task<Void, Never>?
+    /// Task for listening to processed streams
+    private var moveListenerTask: Task<Void, Never>?
+    private var stateListenerTask: Task<Void, Never>?
+    private var orientationListenerTask: Task<Void, Never>?
+    private var batteryListenerTask: Task<Void, Never>?
+    private var cubeTypeListenerTask: Task<Void, Never>?
     private var connectionListenerTask: Task<Void, Never>?
 
-    // MARK: - State (protected by CubeActor isolation)
+    // MARK: - Observable State
 
     /// Current cube state (if known)
     public private(set) var currentState: CubeState?
@@ -54,92 +53,102 @@ public final class GoCube {
     /// Whether orientation tracking is enabled
     public private(set) var isOrientationEnabled = false
 
-    // MARK: - Public AsyncStreams (modern Swift concurrency API)
+    /// Whether the cube is connected
+    public private(set) var isConnected = true
+
+    /// Most recent move (for UI binding)
+    public private(set) var lastMove: Move?
+
+    /// Most recent orientation (for UI binding)
+    public private(set) var lastOrientation: Quaternion?
+
+    // MARK: - Event Streams (for sequential processing)
 
     /// Stream of moves received from the cube
     public let moves: AsyncStream<Move>
     private let movesContinuation: AsyncStream<Move>.Continuation
 
-    /// Stream of cube state updates
-    public let stateUpdates: AsyncStream<CubeState>
-    private let stateUpdatesContinuation: AsyncStream<CubeState>.Continuation
-
-    /// Stream of orientation updates (quaternions)
+    /// Stream of orientation updates (quaternions) - high frequency
     public let orientationUpdates: AsyncStream<Quaternion>
     private let orientationUpdatesContinuation: AsyncStream<Quaternion>.Continuation
 
-    /// Stream of battery level updates
-    public let batteryUpdates: AsyncStream<Int>
-    private let batteryUpdatesContinuation: AsyncStream<Int>.Continuation
-
-    /// Stream of cube type updates
-    public let cubeTypeUpdates: AsyncStream<GoCubeType>
-    private let cubeTypeUpdatesContinuation: AsyncStream<GoCubeType>.Continuation
-
     /// Stream that emits when the cube disconnects
-    public let disconnections: AsyncStream<Void>
-    private let disconnectionsContinuation: AsyncStream<Void>.Continuation
+    public let disconnected: AsyncStream<Void>
+    private let disconnectedContinuation: AsyncStream<Void>.Continuation
 
     // MARK: - Initialization
 
-    init(device: DiscoveredDevice, communicator: BLECommunicator, configuration: GoCubeConfiguration = .default) {
+    init(device: DiscoveredDevice, communicator: BLECommunicator, processor: CubeProcessor, configuration: GoCubeConfiguration = .default) {
         self.id = device.id
         self.name = device.name
         self.communicator = communicator
+        self.processor = processor
         self.configuration = configuration
-        self.quaternionSmoother = QuaternionSmoother(smoothingFactor: configuration.quaternionSmoothingFactor)
 
-        // Initialize AsyncStreams
-        var movesCont: AsyncStream<Move>.Continuation!
-        moves = AsyncStream { movesCont = $0 }
-        movesContinuation = movesCont
-
-        var stateCont: AsyncStream<CubeState>.Continuation!
-        stateUpdates = AsyncStream { stateCont = $0 }
-        stateUpdatesContinuation = stateCont
-
-        var orientCont: AsyncStream<Quaternion>.Continuation!
-        orientationUpdates = AsyncStream { orientCont = $0 }
-        orientationUpdatesContinuation = orientCont
-
-        var batteryCont: AsyncStream<Int>.Continuation!
-        batteryUpdates = AsyncStream { batteryCont = $0 }
-        batteryUpdatesContinuation = batteryCont
-
-        var typeCont: AsyncStream<GoCubeType>.Continuation!
-        cubeTypeUpdates = AsyncStream { typeCont = $0 }
-        cubeTypeUpdatesContinuation = typeCont
-
-        var disconnectCont: AsyncStream<Void>.Continuation!
-        disconnections = AsyncStream { disconnectCont = $0 }
-        disconnectionsContinuation = disconnectCont
+        // Initialize AsyncStreams using makeStream (iOS 17+)
+        (moves, movesContinuation) = AsyncStream.makeStream(of: Move.self)
+        (orientationUpdates, orientationUpdatesContinuation) = AsyncStream.makeStream(of: Quaternion.self)
+        (disconnected, disconnectedContinuation) = AsyncStream.makeStream(of: Void.self)
     }
 
     deinit {
         movesContinuation.finish()
-        stateUpdatesContinuation.finish()
         orientationUpdatesContinuation.finish()
-        batteryUpdatesContinuation.finish()
-        cubeTypeUpdatesContinuation.finish()
-        disconnectionsContinuation.finish()
+        disconnectedContinuation.finish()
     }
 
-    /// Start listening to message and connection streams
+    /// Start listening to processed streams from BLEActor
     public func startListening() {
-        // Listen for messages from the cube
-        messageListenerTask = Task { [weak self] in
-            guard let self = self else { return }
-            for await message in self.communicator.messages {
-                await self.handleMessage(message)
+        // Listen for processed moves from BLEActor
+        moveListenerTask = Task { [weak self] in
+            guard let self else { return }
+            for await move in self.processor.processedMoves {
+                self.moveSequence.append(move)
+                self.lastMove = move
+                self.movesContinuation.yield(move)
+            }
+        }
+
+        // Listen for processed states from BLEActor
+        stateListenerTask = Task { [weak self] in
+            guard let self else { return }
+            for await state in self.processor.processedStates {
+                self.currentState = state
+            }
+        }
+
+        // Listen for processed orientations from BLEActor
+        orientationListenerTask = Task { [weak self] in
+            guard let self else { return }
+            for await orientation in self.processor.processedOrientations {
+                self.lastOrientation = orientation
+                self.orientationUpdatesContinuation.yield(orientation)
+            }
+        }
+
+        // Listen for battery updates from BLEActor
+        batteryListenerTask = Task { [weak self] in
+            guard let self else { return }
+            for await level in self.processor.processedBattery {
+                self.batteryLevel = level
+            }
+        }
+
+        // Listen for cube type updates from BLEActor
+        cubeTypeListenerTask = Task { [weak self] in
+            guard let self else { return }
+            for await type in self.processor.processedCubeType {
+                self.cubeType = type
             }
         }
 
         // Listen for connection state changes
         connectionListenerTask = Task { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
             for await state in self.communicator.connectionStateChanges {
                 if state == .disconnected {
-                    self.disconnectionsContinuation.yield(())
+                    self.isConnected = false
+                    self.disconnectedContinuation.yield(())
                 }
             }
         }
@@ -147,227 +156,150 @@ public final class GoCube {
 
     /// Stop listening to streams
     public func stopListening() {
-        messageListenerTask?.cancel()
-        messageListenerTask = nil
+        moveListenerTask?.cancel()
+        moveListenerTask = nil
+        stateListenerTask?.cancel()
+        stateListenerTask = nil
+        orientationListenerTask?.cancel()
+        orientationListenerTask = nil
+        batteryListenerTask?.cancel()
+        batteryListenerTask = nil
+        cubeTypeListenerTask?.cancel()
+        cubeTypeListenerTask = nil
         connectionListenerTask?.cancel()
         connectionListenerTask = nil
     }
 
-    // MARK: - Message Handling
-
-    private func handleMessage(_ message: GoCubeMessage) async {
-        switch message.type {
-        case .rotation:
-            await handleRotationMessage(message.payload)
-
-        case .cubeState:
-            await handleStateMessage(message.payload)
-
-        case .orientation:
-            await handleOrientationMessage(message.payload)
-
-        case .battery:
-            await handleBatteryMessage(message.payload)
-
-        case .offlineStats:
-            handleOfflineStatsMessage(message.payload)
-
-        case .cubeType:
-            await handleCubeTypeMessage(message.payload)
-        }
-    }
-
-    private func handleRotationMessage(_ payload: Data) async {
-        do {
-            let decodedMoves = try moveDecoder.decode(payload)
-            for move in decodedMoves {
-                moveSequence.append(move)
-                movesContinuation.yield(move)
-            }
-        } catch {
-            logger.error("Failed to decode rotation: \(error.localizedDescription)")
-        }
-    }
-
-    private func handleStateMessage(_ payload: Data) async {
-        do {
-            let state = try stateDecoder.decode(payload)
-            currentState = state
-            stateUpdatesContinuation.yield(state)
-        } catch {
-            logger.error("Failed to decode state: \(error.localizedDescription)")
-        }
-    }
-
-    private func handleOrientationMessage(_ payload: Data) async {
-        do {
-            let rawQuaternion = try quaternionDecoder.decode(payload)
-            let smoothed = await quaternionSmoother.update(rawQuaternion)
-            let relative = await orientationManager.relativeOrientation(smoothed)
-            orientationUpdatesContinuation.yield(relative)
-        } catch {
-            logger.error("Failed to decode orientation: \(error.localizedDescription)")
-        }
-    }
-
-    private func handleBatteryMessage(_ payload: Data) async {
-        guard let level = payload.first else { return }
-        let battLevel = Int(min(level, 100))
-        batteryLevel = battLevel
-        batteryUpdatesContinuation.yield(battLevel)
-    }
-
-    private func handleOfflineStatsMessage(_ payload: Data) {
-        // Format: "moves#time#solves"
-        if let string = String(data: payload, encoding: .utf8) {
-            logger.info("Offline stats: \(string)")
-        }
-    }
-
-    private func handleCubeTypeMessage(_ payload: Data) async {
-        guard let typeRaw = payload.first else { return }
-        let type = GoCubeType(rawValue: typeRaw)
-        cubeType = type
-        cubeTypeUpdatesContinuation.yield(type)
-    }
-
-    // MARK: - Commands
+    // MARK: - Commands (with typed throws)
 
     /// Request the current battery level
-    public func requestBattery() throws {
+    public func requestBattery() throws(GoCubeError) {
         try communicator.sendCommand(.getBattery)
     }
 
     /// Request battery level and wait for response
-    public func getBattery() async throws -> Int {
+    public func getBattery() async throws(GoCubeError) -> Int {
         try communicator.sendCommand(.getBattery)
 
-        // Poll for result with timeout
-        let timeout = configuration.commandTimeout
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-
+        let deadline = ContinuousClock.now.advanced(by: configuration.commandTimeout)
         while ContinuousClock.now < deadline {
             if let level = batteryLevel {
                 return level
             }
-            try await Task.sleep(for: .milliseconds(50))
+            try? await Task.sleep(for: .milliseconds(50))
         }
 
-        throw GoCubeError.timeout
+        throw .timeout
     }
 
     /// Request the current cube state
-    public func requestState() throws {
+    public func requestState() throws(GoCubeError) {
         try communicator.sendCommand(.getCubeState)
     }
 
     /// Request cube state and wait for response
-    public func getState() async throws -> CubeState {
+    public func getState() async throws(GoCubeError) -> CubeState {
         try communicator.sendCommand(.getCubeState)
 
-        // Poll for result with timeout
-        let timeout = configuration.commandTimeout
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-
+        let deadline = ContinuousClock.now.advanced(by: configuration.commandTimeout)
         while ContinuousClock.now < deadline {
             if let state = currentState {
                 return state
             }
-            try await Task.sleep(for: .milliseconds(50))
+            try? await Task.sleep(for: .milliseconds(50))
         }
 
-        throw GoCubeError.timeout
+        throw .timeout
     }
 
     /// Request the cube type
-    public func requestCubeType() throws {
+    public func requestCubeType() throws(GoCubeError) {
         try communicator.sendCommand(.getCubeType)
     }
 
     /// Request cube type and wait for response
-    public func fetchCubeType() async throws -> GoCubeType {
+    public func fetchCubeType() async throws(GoCubeError) -> GoCubeType {
         try communicator.sendCommand(.getCubeType)
 
-        // Poll for result with timeout
-        let timeout = configuration.commandTimeout
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-
+        let deadline = ContinuousClock.now.advanced(by: configuration.commandTimeout)
         while ContinuousClock.now < deadline {
             if let type = cubeType {
                 return type
             }
-            try await Task.sleep(for: .milliseconds(50))
+            try? await Task.sleep(for: .milliseconds(50))
         }
 
-        throw GoCubeError.timeout
+        throw .timeout
     }
 
     /// Reset the cube tracking to solved state
-    /// Note: Updates local state immediately; actual cube state is confirmed via stateUpdates stream
-    public func resetToSolved() throws {
+    public func resetToSolved() throws(GoCubeError) {
         try communicator.sendCommand(.resetToSolved)
         currentState = .solved
         moveSequence = MoveSequence()
     }
 
     /// Reboot the cube
-    public func reboot() throws {
+    public func reboot() throws(GoCubeError) {
         try communicator.sendCommand(.reboot)
     }
 
     /// Enable 3D orientation tracking (~15 Hz updates)
-    public func enableOrientation() throws {
+    public func enableOrientation() throws(GoCubeError) {
         try communicator.sendCommand(.enableOrientation)
         isOrientationEnabled = true
     }
 
     /// Disable 3D orientation tracking
-    public func disableOrientation() throws {
+    public func disableOrientation() throws(GoCubeError) {
         try communicator.sendCommand(.disableOrientation)
         isOrientationEnabled = false
     }
 
     /// Calibrate the orientation sensor
-    public func calibrateOrientation() throws {
+    public func calibrateOrientation() throws(GoCubeError) {
         try communicator.sendCommand(.calibrateOrientation)
     }
 
     /// Set the current orientation as "home" (identity)
     public func setHomeOrientation() async {
-        if let current = await quaternionSmoother.current {
-            await orientationManager.setHome(current)
-        }
+        await processor.setHomeOrientation()
     }
 
     /// Clear the home orientation
     public func clearHomeOrientation() async {
-        await orientationManager.clearHome()
+        await processor.clearHomeOrientation()
+    }
+
+    /// Check if home orientation is set
+    public func hasHomeOrientation() async -> Bool {
+        await processor.hasHomeOrientation()
     }
 
     /// Request offline statistics
-    public func requestOfflineStats() throws {
+    public func requestOfflineStats() throws(GoCubeError) {
         try communicator.sendCommand(.getOfflineStats)
     }
 
     // MARK: - LED Control
 
     /// Flash the LEDs at normal speed
-    public func flashLEDs() throws {
+    public func flashLEDs() throws(GoCubeError) {
         try communicator.sendCommand(.flashLEDNormal)
     }
 
     /// Flash the LEDs slowly
-    public func flashLEDsSlow() throws {
+    public func flashLEDsSlow() throws(GoCubeError) {
         try communicator.sendCommand(.flashLEDSlow)
     }
 
     /// Toggle the animated backlight
-    public func toggleAnimatedBacklight() throws {
+    public func toggleAnimatedBacklight() throws(GoCubeError) {
         try communicator.sendCommand(.toggleAnimatedBacklight)
     }
 
     /// Toggle the backlight on/off
-    public func toggleBacklight() throws {
+    public func toggleBacklight() throws(GoCubeError) {
         try communicator.sendCommand(.toggleBacklight)
     }
 
@@ -384,6 +316,7 @@ public final class GoCube {
     public func disconnect() {
         stopListening()
         communicator.disconnect()
+        isConnected = false
     }
 }
 

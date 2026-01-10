@@ -32,15 +32,21 @@ public enum ConnectionState: Equatable, Sendable {
 // MARK: - BLE Delegate Proxy
 
 /// Non-actor proxy that handles CoreBluetooth delegate callbacks
-/// and forwards them to the actor-isolated BLECommunicator
+/// Raw data is yielded directly to AsyncStream (minimal overhead)
+/// Connection events dispatch to MainActor (infrequent, needs UI state update)
 private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
 
     weak var communicator: BLECommunicator?
 
+    /// Continuation for raw BLE data - yields directly without Task (high frequency path)
+    var rawDataContinuation: AsyncStream<Data>.Continuation?
+
     // MARK: - CBCentralManagerDelegate
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        Task { await communicator?.handleBluetoothStateUpdate(central.state) }
+        Task { @MainActor in
+            communicator?.handleBluetoothStateUpdate(central.state)
+        }
     }
 
     func centralManager(
@@ -50,11 +56,15 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
         rssi RSSI: NSNumber
     ) {
         let device = DiscoveredDevice(peripheral: peripheral, rssi: RSSI.intValue)
-        Task { await communicator?.handleDiscovery(device) }
+        Task { @MainActor in
+            communicator?.handleDiscovery(device)
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        Task { await communicator?.handleDidConnect(peripheral) }
+        Task { @MainActor in
+            communicator?.handleDidConnect(peripheral)
+        }
     }
 
     func centralManager(
@@ -62,7 +72,9 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
         didFailToConnect peripheral: CBPeripheral,
         error: Error?
     ) {
-        Task { await communicator?.handleDidFailToConnect(error) }
+        Task { @MainActor in
+            communicator?.handleDidFailToConnect(error)
+        }
     }
 
     func centralManager(
@@ -70,13 +82,17 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: Error?
     ) {
-        Task { await communicator?.handleDidDisconnect(error) }
+        Task { @MainActor in
+            communicator?.handleDidDisconnect(error)
+        }
     }
 
     // MARK: - CBPeripheralDelegate
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        Task { await communicator?.handleDidDiscoverServices(peripheral, error: error) }
+        Task { @MainActor in
+            communicator?.handleDidDiscoverServices(peripheral, error: error)
+        }
     }
 
     func peripheral(
@@ -84,7 +100,9 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
         didDiscoverCharacteristicsFor service: CBService,
         error: Error?
     ) {
-        Task { await communicator?.handleDidDiscoverCharacteristics(service, error: error) }
+        Task { @MainActor in
+            communicator?.handleDidDiscoverCharacteristics(service, error: error)
+        }
     }
 
     func peripheral(
@@ -92,10 +110,11 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
         didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
+        // Hot path: yield directly to stream (no Task overhead)
         guard error == nil,
               characteristic.uuid == GoCubeBLE.notifyCharacteristicUUID,
               let data = characteristic.value else { return }
-        Task { await communicator?.handleDidReceiveData(data) }
+        rawDataContinuation?.yield(data)
     }
 
     func peripheral(
@@ -104,7 +123,9 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
         error: Error?
     ) {
         if let error = error {
-            Task { await communicator?.handleNotificationStateError(error) }
+            Task { @MainActor in
+                communicator?.handleNotificationStateError(error)
+            }
         }
     }
 }
@@ -112,9 +133,10 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
 // MARK: - BLECommunicator
 
 /// Low-level BLE communication handler
-/// Isolated to CubeActor for thread-safe state management
-@CubeActor
-public final class BLECommunicator {
+/// Isolated to MainActor for thread-safe state management and SwiftUI compatibility
+/// Heavy data processing is delegated to BLEActor (off MainActor)
+@MainActor
+public final class BLECommunicator: Sendable {
 
     // MARK: - Properties
 
@@ -133,20 +155,26 @@ public final class BLECommunicator {
     private var _connectionState: ConnectionState = .disconnected
     private var _isScanning: Bool = false
     private var _bluetoothState: CBManagerState = .unknown
-    private var messageBuffer: [UInt8] = []
 
     // Continuations for one-shot operations
     private var connectionContinuation: CheckedContinuation<Void, Error>?
 
-    // MARK: - AsyncStreams for streaming events
+    // MARK: - CubeProcessor for off-main processing
+
+    /// Processor for BLE data (isolated to @CubeActor)
+    public private(set) var processor: CubeProcessor?
+
+    // MARK: - Raw Data Stream (feeds directly to CubeProcessor)
+
+    /// Stream of raw BLE data - consumed by CubeProcessor
+    private var rawDataStream: AsyncStream<Data>?
+    private var rawDataContinuation: AsyncStream<Data>.Continuation?
+
+    // MARK: - AsyncStreams for streaming events (using makeStream for iOS 17+)
 
     /// Stream of discovered devices (updated on each discovery)
     public let discoveries: AsyncStream<[DiscoveredDevice]>
     private let discoveriesContinuation: AsyncStream<[DiscoveredDevice]>.Continuation
-
-    /// Stream of parsed messages from the cube
-    public let messages: AsyncStream<GoCubeMessage>
-    private let messagesContinuation: AsyncStream<GoCubeMessage>.Continuation
 
     /// Stream of connection state changes
     public let connectionStateChanges: AsyncStream<ConnectionState>
@@ -159,22 +187,10 @@ public final class BLECommunicator {
     // MARK: - Initialization
 
     public init() {
-        // Initialize AsyncStreams
-        var discCont: AsyncStream<[DiscoveredDevice]>.Continuation!
-        discoveries = AsyncStream { discCont = $0 }
-        discoveriesContinuation = discCont
-
-        var msgCont: AsyncStream<GoCubeMessage>.Continuation!
-        messages = AsyncStream { msgCont = $0 }
-        messagesContinuation = msgCont
-
-        var connCont: AsyncStream<ConnectionState>.Continuation!
-        connectionStateChanges = AsyncStream { connCont = $0 }
-        connectionStateContinuation = connCont
-
-        var btCont: AsyncStream<CBManagerState>.Continuation!
-        bluetoothStateChanges = AsyncStream { btCont = $0 }
-        bluetoothStateContinuation = btCont
+        // Initialize AsyncStreams using makeStream (iOS 17+ cleaner syntax)
+        (discoveries, discoveriesContinuation) = AsyncStream.makeStream(of: [DiscoveredDevice].self)
+        (connectionStateChanges, connectionStateContinuation) = AsyncStream.makeStream(of: ConnectionState.self)
+        (bluetoothStateChanges, bluetoothStateContinuation) = AsyncStream.makeStream(of: CBManagerState.self)
 
         // Setup delegate proxy and central manager
         delegateProxy.communicator = self
@@ -183,9 +199,9 @@ public final class BLECommunicator {
 
     deinit {
         discoveriesContinuation.finish()
-        messagesContinuation.finish()
         connectionStateContinuation.finish()
         bluetoothStateContinuation.finish()
+        rawDataContinuation?.finish()
     }
 
     // MARK: - Public Accessors
@@ -236,17 +252,23 @@ public final class BLECommunicator {
     }
 
     /// Connect to a device (one-shot with continuation)
-    public func connect(to device: DiscoveredDevice) async throws {
+    public func connect(to device: DiscoveredDevice) async throws(GoCubeError) {
         guard _bluetoothState == .poweredOn else {
-            throw GoCubeError.bluetoothPoweredOff
+            throw .bluetoothPoweredOff
         }
 
         stopScanning()
         setConnectionState(.connecting)
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            self.connectionContinuation = continuation
-            self.centralManager.connect(device.peripheral, options: nil)
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                self.connectionContinuation = continuation
+                self.centralManager.connect(device.peripheral, options: nil)
+            }
+        } catch let error as GoCubeError {
+            throw error
+        } catch {
+            throw .connectionFailed(error.localizedDescription)
         }
     }
 
@@ -256,23 +278,51 @@ public final class BLECommunicator {
         centralManager.cancelPeripheralConnection(peripheral)
     }
 
-    public func sendCommand(_ command: GoCubeCommand) throws {
+    public func sendCommand(_ command: GoCubeCommand) throws(GoCubeError) {
         try write(data: messageParser.buildCommandFrame(command))
     }
 
-    public func write(data: Data) throws {
+    public func write(data: Data) throws(GoCubeError) {
         guard let peripheral = connectedPeripheral,
               let characteristic = writeCharacteristic else {
-            throw GoCubeError.notConnected
+            throw .notConnected
         }
         peripheral.writeValue(data, for: characteristic, type: .withoutResponse)
     }
 
-    public func clearBuffer() {
-        messageBuffer.removeAll()
+    public func clearBuffer() async {
+        await processor?.clearBuffer()
     }
 
-    // MARK: - Delegate Handlers (called from proxy)
+    /// Create and configure the CubeProcessor for processing
+    /// Sets up raw data stream that feeds directly to processor
+    /// - Parameter smoothingFactor: Quaternion smoothing factor from configuration
+    public func createProcessor(smoothingFactor: Double) async {
+        // Create raw data stream
+        let (stream, continuation) = AsyncStream.makeStream(of: Data.self)
+        rawDataStream = stream
+        rawDataContinuation = continuation
+
+        // Give continuation to delegate proxy for direct yielding (no Task overhead)
+        delegateProxy.rawDataContinuation = continuation
+
+        // Create processor and start it listening to the raw data stream
+        let newProcessor = await CubeProcessor(smoothingFactor: smoothingFactor)
+        processor = newProcessor
+        await newProcessor.startListening(to: stream)
+    }
+
+    /// Destroy the CubeProcessor when disconnecting
+    public func destroyProcessor() {
+        // Finish the stream to stop processor's listening task
+        rawDataContinuation?.finish()
+        delegateProxy.rawDataContinuation = nil
+        rawDataContinuation = nil
+        rawDataStream = nil
+        processor = nil
+    }
+
+    // MARK: - Delegate Handlers (called from proxy via MainActor)
 
     func handleBluetoothStateUpdate(_ state: CBManagerState) {
         _bluetoothState = state
@@ -360,20 +410,6 @@ public final class BLECommunicator {
         resumeConnection(with: .success(()))
     }
 
-    func handleDidReceiveData(_ data: Data) {
-        messageBuffer.append(contentsOf: data)
-
-        // Extract and process complete messages
-        while let messageData = extractOneMessage() {
-            do {
-                let message = try messageParser.parse(messageData)
-                messagesContinuation.yield(message)
-            } catch {
-                logger.error("Failed to parse message: \(error.localizedDescription)")
-            }
-        }
-    }
-
     func handleNotificationStateError(_ error: Error) {
         logger.error("Notification state error: \(error.localizedDescription)")
     }
@@ -397,36 +433,4 @@ public final class BLECommunicator {
         }
     }
 
-    private func extractOneMessage() -> Data? {
-        guard let startIndex = messageBuffer.firstIndex(of: GoCubeFrame.prefix) else {
-            messageBuffer.removeAll()
-            return nil
-        }
-
-        if startIndex > 0 {
-            messageBuffer.removeFirst(startIndex)
-        }
-
-        guard messageBuffer.count >= GoCubeFrame.minimumLength else {
-            return nil
-        }
-
-        let declaredLength = Int(messageBuffer[GoCubeFrame.lengthOffset])
-        let expectedTotalLength = 1 + 1 + declaredLength + 1 + 2
-
-        guard messageBuffer.count >= expectedTotalLength else {
-            return nil
-        }
-
-        let suffixStart = expectedTotalLength - 2
-        guard messageBuffer[suffixStart] == GoCubeFrame.suffix[0] &&
-              messageBuffer[suffixStart + 1] == GoCubeFrame.suffix[1] else {
-            messageBuffer.removeFirst()
-            return extractOneMessage()
-        }
-
-        let messageBytes = Array(messageBuffer.prefix(expectedTotalLength))
-        messageBuffer.removeFirst(expectedTotalLength)
-        return Data(messageBytes)
-    }
 }
