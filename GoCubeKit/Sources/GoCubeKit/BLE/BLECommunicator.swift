@@ -10,8 +10,8 @@ public struct DiscoveredDevice: Identifiable, Equatable, Sendable {
     public nonisolated(unsafe) let peripheral: CBPeripheral
 
     public init(peripheral: CBPeripheral, rssi: Int) {
-        self.id = peripheral.identifier
-        self.name = peripheral.name ?? "Unknown GoCube"
+        id = peripheral.identifier
+        name = peripheral.name ?? "Unknown GoCube"
         self.rssi = rssi
         self.peripheral = peripheral
     }
@@ -35,7 +35,6 @@ public enum ConnectionState: Equatable, Sendable {
 /// Raw data is yielded directly to AsyncStream (minimal overhead)
 /// Connection events dispatch to MainActor (infrequent, needs UI state update)
 private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
-
     weak var communicator: BLECommunicator?
 
     /// Continuation for raw BLE data - yields directly without Task (high frequency path)
@@ -50,9 +49,9 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
     }
 
     func centralManager(
-        _ central: CBCentralManager,
+        _: CBCentralManager,
         didDiscover peripheral: CBPeripheral,
-        advertisementData: [String: Any],
+        advertisementData _: [String: Any],
         rssi RSSI: NSNumber
     ) {
         let device = DiscoveredDevice(peripheral: peripheral, rssi: RSSI.intValue)
@@ -61,15 +60,15 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
         }
     }
 
-    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+    func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
         Task { @MainActor in
             communicator?.handleDidConnect(peripheral)
         }
     }
 
     func centralManager(
-        _ central: CBCentralManager,
-        didFailToConnect peripheral: CBPeripheral,
+        _: CBCentralManager,
+        didFailToConnect _: CBPeripheral,
         error: Error?
     ) {
         Task { @MainActor in
@@ -78,8 +77,8 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
     }
 
     func centralManager(
-        _ central: CBCentralManager,
-        didDisconnectPeripheral peripheral: CBPeripheral,
+        _: CBCentralManager,
+        didDisconnectPeripheral _: CBPeripheral,
         error: Error?
     ) {
         Task { @MainActor in
@@ -96,7 +95,7 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
     }
 
     func peripheral(
-        _ peripheral: CBPeripheral,
+        _: CBPeripheral,
         didDiscoverCharacteristicsFor service: CBService,
         error: Error?
     ) {
@@ -106,7 +105,7 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
     }
 
     func peripheral(
-        _ peripheral: CBPeripheral,
+        _: CBPeripheral,
         didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
@@ -118,8 +117,8 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
     }
 
     func peripheral(
-        _ peripheral: CBPeripheral,
-        didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        _: CBPeripheral,
+        didUpdateNotificationStateFor _: CBCharacteristic,
         error: Error?
     ) {
         if let error = error {
@@ -137,7 +136,6 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
 /// Heavy data processing is delegated to BLEActor (off MainActor)
 @MainActor
 public final class BLECommunicator: Sendable {
-
     // MARK: - Properties
 
     private let logger = Logger(subsystem: "com.gocubekit", category: "BLE")
@@ -284,7 +282,8 @@ public final class BLECommunicator: Sendable {
 
     public func write(data: Data) throws(GoCubeError) {
         guard let peripheral = connectedPeripheral,
-              let characteristic = writeCharacteristic else {
+              let characteristic = writeCharacteristic
+        else {
             throw .notConnected
         }
         peripheral.writeValue(data, for: characteristic, type: .withoutResponse)
@@ -352,7 +351,7 @@ public final class BLECommunicator: Sendable {
         resumeConnection(with: .failure(GoCubeError.connectionFailed(error?.localizedDescription ?? "Unknown")))
     }
 
-    func handleDidDisconnect(_ error: Error?) {
+    func handleDidDisconnect(_: Error?) {
         connectedPeripheral = nil
         writeCharacteristic = nil
         notifyCharacteristic = nil
@@ -401,7 +400,7 @@ public final class BLECommunicator: Sendable {
             }
         }
 
-        guard writeCharacteristic != nil && notifyCharacteristic != nil else {
+        guard writeCharacteristic != nil, notifyCharacteristic != nil else {
             resumeConnection(with: .failure(GoCubeError.connection(.characteristicNotFound)))
             return
         }
@@ -428,9 +427,8 @@ public final class BLECommunicator: Sendable {
         switch result {
         case .success:
             continuation?.resume()
-        case .failure(let error):
+        case let .failure(error):
             continuation?.resume(throwing: error)
         }
     }
-
 }

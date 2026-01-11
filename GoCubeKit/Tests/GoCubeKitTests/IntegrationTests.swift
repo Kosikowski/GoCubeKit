@@ -1,9 +1,8 @@
-import XCTest
 @testable import GoCubeKit
+import XCTest
 
 /// Integration tests that verify the full message processing pipeline
 final class IntegrationTests: XCTestCase {
-
     var messageParser: MessageParser!
     var moveDecoder: MoveDecoder!
     var stateDecoder: StateDecoder!
@@ -48,10 +47,10 @@ final class IntegrationTests: XCTestCase {
     func testFullPipeline_MultipleRotations() throws {
         // Simulate a sequence of moves: R U R' U'
         let moves: [(UInt8, UInt8)] = [
-            (0x08, 0x00),  // R
-            (0x04, 0x00),  // U
-            (0x09, 0x00),  // R'
-            (0x05, 0x00)   // U'
+            (0x08, 0x00), // R
+            (0x04, 0x00), // U
+            (0x09, 0x00), // R'
+            (0x05, 0x00), // U'
         ]
 
         var payloadBytes: [UInt8] = []
@@ -136,8 +135,8 @@ final class IntegrationTests: XCTestCase {
         let msg2Bytes: [UInt8] = [0x2A, 0x02, 0x05, 0x64, 0x95, 0x0D, 0x0A]
 
         // Split them into fragments
-        let fragment1 = Data(msg1Bytes[0..<3])
-        let fragment2 = Data(msg1Bytes[3...] + msg2Bytes[0..<4])
+        let fragment1 = Data(msg1Bytes[0 ..< 3])
+        let fragment2 = Data(msg1Bytes[3...] + msg2Bytes[0 ..< 4])
         let fragment3 = Data(msg2Bytes[4...])
 
         // Process fragments
@@ -227,7 +226,7 @@ final class IntegrationTests: XCTestCase {
             .flashLEDSlow,
             .toggleBacklight,
             .getCubeType,
-            .calibrateOrientation
+            .calibrateOrientation,
         ]
 
         for command in commands {
@@ -244,7 +243,7 @@ final class IntegrationTests: XCTestCase {
         let solvingMoves: [(String, UInt8)] = [
             ("R", 0x08), ("U", 0x04), ("R'", 0x09), ("U'", 0x05),
             ("F", 0x02), ("R", 0x08), ("U", 0x04), ("R'", 0x09),
-            ("U'", 0x05), ("F'", 0x03)
+            ("U'", 0x05), ("F'", 0x03),
         ]
 
         var sequence = MoveSequence()
@@ -271,7 +270,7 @@ final class IntegrationTests: XCTestCase {
             (0.0, 0.0, 0.0, 1.0),
             (0.01, 0.01, 0.0, 0.9999),
             (0.02, 0.02, 0.0, 0.9996),
-            (0.03, 0.03, 0.0, 0.9991)
+            (0.03, 0.03, 0.0, 0.9991),
         ]
 
         var lastSmoothed: Quaternion?
@@ -314,7 +313,6 @@ final class IntegrationTests: XCTestCase {
 // MARK: - BLE Constants Tests
 
 final class BLEConstantsTests: XCTestCase {
-
     func testServiceUUID() {
         let uuid = GoCubeBLE.serviceUUID
         XCTAssertEqual(uuid.uuidString.lowercased(), "6e400001-b5a3-f393-e0a9-e50e24dcca9e")
@@ -377,7 +375,6 @@ final class BLEConstantsTests: XCTestCase {
 // MARK: - Error Type Tests
 
 final class ErrorTypeTests: XCTestCase {
-
     func testGoCubeParsingError_MessageTooShort_Equatable() {
         let error1 = GoCubeError.parsing(.messageTooShort(length: 3))
         let error2 = GoCubeError.parsing(.messageTooShort(length: 3))

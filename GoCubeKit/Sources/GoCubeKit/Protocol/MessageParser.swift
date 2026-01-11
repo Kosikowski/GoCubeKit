@@ -20,7 +20,6 @@ public struct GoCubeMessage: Equatable, Sendable {
 
 /// Parses raw BLE data into GoCube messages
 public struct MessageParser: Sendable {
-
     public init() {}
 
     /// Parse a raw data buffer into a GoCube message
@@ -60,7 +59,7 @@ public struct MessageParser: Sendable {
         // Validate checksum (sum of all bytes before checksum, mod 256)
         let checksumIndex = bytes.count - 3
         let expectedChecksum = bytes[checksumIndex]
-        let calculatedChecksum = calculateChecksum(Array(bytes[0..<checksumIndex]))
+        let calculatedChecksum = calculateChecksum(Array(bytes[0 ..< checksumIndex]))
         guard expectedChecksum == calculatedChecksum else {
             throw GoCubeError.parsing(.checksumMismatch(
                 expected: calculatedChecksum,
@@ -77,7 +76,7 @@ public struct MessageParser: Sendable {
         // Extract payload (everything between type and checksum)
         let payloadStart = GoCubeFrame.payloadOffset
         let payloadEnd = checksumIndex
-        let payload = Data(bytes[payloadStart..<payloadEnd])
+        let payload = Data(bytes[payloadStart ..< payloadEnd])
 
         return GoCubeMessage(type: messageType, payload: payload, rawData: data)
     }
@@ -182,8 +181,9 @@ public actor MessageBuffer {
 
         // Verify suffix
         let suffixStart = expectedTotalLength - 2
-        guard buffer[suffixStart] == GoCubeFrame.suffix[0] &&
-              buffer[suffixStart + 1] == GoCubeFrame.suffix[1] else {
+        guard buffer[suffixStart] == GoCubeFrame.suffix[0],
+              buffer[suffixStart + 1] == GoCubeFrame.suffix[1]
+        else {
             // Invalid frame, skip this start marker and try again
             buffer.removeFirst()
             return extractOneMessage()

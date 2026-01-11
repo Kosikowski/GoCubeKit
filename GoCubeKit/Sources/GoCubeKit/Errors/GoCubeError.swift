@@ -3,12 +3,15 @@ import Foundation
 /// Unified error type for all GoCubeKit errors
 public enum GoCubeError: Error, Equatable, Sendable {
     // MARK: - Bluetooth Errors
+
     case bluetooth(BluetoothError)
 
     // MARK: - Connection Errors
+
     case connection(ConnectionError)
 
     // MARK: - Protocol Errors
+
     case parsing(ProtocolError)
 
     // MARK: - Convenience Accessors
@@ -40,9 +43,9 @@ public enum GoCubeError: Error, Equatable, Sendable {
 
 // MARK: - Bluetooth Errors
 
-extension GoCubeError {
+public extension GoCubeError {
     /// Errors related to Bluetooth hardware and permissions
-    public enum BluetoothError: Error, Equatable, Sendable {
+    enum BluetoothError: Error, Equatable, Sendable {
         /// Bluetooth hardware is not available on this device
         case unavailable
 
@@ -59,9 +62,9 @@ extension GoCubeError {
 
 // MARK: - Connection Errors
 
-extension GoCubeError {
+public extension GoCubeError {
     /// Errors related to device connection
-    public enum ConnectionError: Error, Equatable, Sendable {
+    enum ConnectionError: Error, Equatable, Sendable {
         /// No device is currently connected
         case notConnected
 
@@ -90,9 +93,9 @@ extension GoCubeError {
 
 // MARK: - Protocol Errors
 
-extension GoCubeError {
+public extension GoCubeError {
     /// Errors related to message parsing and protocol handling
-    public enum ProtocolError: Error, Equatable, Sendable {
+    enum ProtocolError: Error, Equatable, Sendable {
         // MARK: - Message Parsing
 
         /// Message is too short to be valid
@@ -153,11 +156,11 @@ extension GoCubeError {
 extension GoCubeError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case .bluetooth(let error):
+        case let .bluetooth(error):
             return error.errorDescription
-        case .connection(let error):
+        case let .connection(error):
             return error.errorDescription
-        case .parsing(let error):
+        case let .parsing(error):
             return error.errorDescription
         }
     }
@@ -172,7 +175,7 @@ extension GoCubeError.BluetoothError: LocalizedError {
             return "Bluetooth access is not authorized. Please enable Bluetooth permission in Settings."
         case .poweredOff:
             return "Bluetooth is powered off. Please enable Bluetooth to connect to GoCube."
-        case .unsupportedState(let state):
+        case let .unsupportedState(state):
             return "Bluetooth is in an unsupported state: \(state)"
         }
     }
@@ -185,7 +188,7 @@ extension GoCubeError.ConnectionError: LocalizedError {
             return "No GoCube is currently connected"
         case .deviceNotFound:
             return "GoCube device was not found"
-        case .failed(let reason):
+        case let .failed(reason):
             return "Connection failed: \(reason)"
         case .disconnected:
             return "GoCube disconnected unexpectedly"
@@ -195,7 +198,7 @@ extension GoCubeError.ConnectionError: LocalizedError {
             return "Required BLE characteristic not found"
         case .timeout:
             return "Operation timed out"
-        case .writeFailed(let reason):
+        case let .writeFailed(reason):
             return "Failed to write to device: \(reason)"
         }
     }
@@ -204,35 +207,35 @@ extension GoCubeError.ConnectionError: LocalizedError {
 extension GoCubeError.ProtocolError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case .messageTooShort(let length):
+        case let .messageTooShort(length):
             return "Message too short: \(length) bytes"
-        case .invalidPrefix(let received):
+        case let .invalidPrefix(received):
             return "Invalid message prefix: 0x\(String(format: "%02X", received))"
-        case .invalidSuffix(let received):
+        case let .invalidSuffix(received):
             return "Invalid message suffix: \(received.map { String(format: "0x%02X", $0) }.joined(separator: " "))"
-        case .checksumMismatch(let expected, let received):
+        case let .checksumMismatch(expected, received):
             return "Checksum mismatch: expected 0x\(String(format: "%02X", expected)), got 0x\(String(format: "%02X", received))"
-        case .unknownMessageType(let type):
+        case let .unknownMessageType(type):
             return "Unknown message type: 0x\(String(format: "%02X", type))"
-        case .payloadLengthMismatch(let expected, let actual):
+        case let .payloadLengthMismatch(expected, actual):
             return "Payload length mismatch: expected \(expected), got \(actual)"
-        case .invalidPayload(let reason):
+        case let .invalidPayload(reason):
             return "Invalid payload: \(reason)"
         case .emptyMovePayload:
             return "Empty move payload"
-        case .invalidMoveCode(let code):
+        case let .invalidMoveCode(code):
             return "Invalid move code: 0x\(String(format: "%02X", code))"
-        case .oddMovePayloadLength(let length):
+        case let .oddMovePayloadLength(length):
             return "Odd move payload length: \(length) (expected even)"
-        case .invalidColorValue(let value, let position):
+        case let .invalidColorValue(value, position):
             return "Invalid color value 0x\(String(format: "%02X", value)) at position \(position)"
-        case .invalidOrientationValue(let value, let face):
+        case let .invalidOrientationValue(value, face):
             return "Invalid orientation value 0x\(String(format: "%02X", value)) for face \(face)"
-        case .invalidQuaternionFormat(let reason):
+        case let .invalidQuaternionFormat(reason):
             return "Invalid quaternion format: \(reason)"
-        case .invalidQuaternionComponentCount(let expected, let actual):
+        case let .invalidQuaternionComponentCount(expected, actual):
             return "Invalid quaternion component count: expected \(expected), got \(actual)"
-        case .invalidQuaternionComponent(let component):
+        case let .invalidQuaternionComponent(component):
             return "Invalid quaternion component: '\(component)'"
         }
     }

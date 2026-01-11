@@ -2,7 +2,6 @@ import Foundation
 
 /// Configuration options for GoCubeKit
 public struct GoCubeConfiguration: Sendable {
-
     // MARK: - Timeouts
 
     /// Timeout for command responses (battery, state, cube type requests)
@@ -57,12 +56,12 @@ public struct GoCubeConfiguration: Sendable {
 
 // MARK: - Default Configurations
 
-extension GoCubeConfiguration {
+public extension GoCubeConfiguration {
     /// Default configuration
-    public static let `default` = GoCubeConfiguration()
+    static let `default` = GoCubeConfiguration()
 
     /// Configuration optimized for responsive UI (less smoothing, shorter timeouts)
-    public static var responsive: GoCubeConfiguration {
+    static var responsive: GoCubeConfiguration {
         .configure { config in
             config.commandTimeout = .seconds(3)
             config.scanTimeout = .seconds(5)
@@ -71,7 +70,7 @@ extension GoCubeConfiguration {
     }
 
     /// Configuration optimized for stability (more smoothing, longer timeouts)
-    public static var stable: GoCubeConfiguration {
+    static var stable: GoCubeConfiguration {
         .configure { config in
             config.commandTimeout = .seconds(10)
             config.scanTimeout = .seconds(20)

@@ -1,8 +1,7 @@
-import XCTest
 @testable import GoCubeKit
+import XCTest
 
 final class StateDecoderTests: XCTestCase {
-
     var decoder: StateDecoder!
 
     override func setUp() {
@@ -26,13 +25,13 @@ final class StateDecoderTests: XCTestCase {
         let faceColors: [UInt8] = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05]
 
         for color in faceColors {
-            for _ in 0..<9 {
+            for _ in 0 ..< 9 {
                 bytes.append(color)
             }
         }
 
         // 6 center orientations (all 0)
-        for _ in 0..<6 {
+        for _ in 0 ..< 6 {
             bytes.append(0x00)
         }
 
@@ -90,27 +89,27 @@ final class StateDecoderTests: XCTestCase {
         var bytes: [UInt8] = []
 
         // Face 0 (Back): alternating blue/green
-        for i in 0..<9 {
+        for i in 0 ..< 9 {
             bytes.append(UInt8(i % 2))
         }
         // Face 1 (Front): all green
-        for _ in 0..<9 {
+        for _ in 0 ..< 9 {
             bytes.append(0x01)
         }
         // Face 2 (Up): all white
-        for _ in 0..<9 {
+        for _ in 0 ..< 9 {
             bytes.append(0x02)
         }
         // Face 3 (Down): all yellow
-        for _ in 0..<9 {
+        for _ in 0 ..< 9 {
             bytes.append(0x03)
         }
         // Face 4 (Right): all red
-        for _ in 0..<9 {
+        for _ in 0 ..< 9 {
             bytes.append(0x04)
         }
         // Face 5 (Left): all orange
-        for _ in 0..<9 {
+        for _ in 0 ..< 9 {
             bytes.append(0x05)
         }
         // Orientations
@@ -155,7 +154,7 @@ final class StateDecoderTests: XCTestCase {
         let payload = Data(Array(repeating: UInt8(0x00), count: 59))
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case GoCubeError.parsing(.payloadLengthMismatch(let expected, let actual)) = error else {
+            guard case let GoCubeError.parsing(.payloadLengthMismatch(expected, actual)) = error else {
                 XCTFail("Expected payloadLengthMismatch error")
                 return
             }
@@ -168,7 +167,7 @@ final class StateDecoderTests: XCTestCase {
         let payload = Data(Array(repeating: UInt8(0x00), count: 61))
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case GoCubeError.parsing(.payloadLengthMismatch(let expected, let actual)) = error else {
+            guard case let GoCubeError.parsing(.payloadLengthMismatch(expected, actual)) = error else {
                 XCTFail("Expected payloadLengthMismatch error")
                 return
             }
@@ -181,7 +180,7 @@ final class StateDecoderTests: XCTestCase {
         let payload = Data()
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case GoCubeError.parsing(.payloadLengthMismatch(let expected, let actual)) = error else {
+            guard case let GoCubeError.parsing(.payloadLengthMismatch(expected, actual)) = error else {
                 XCTFail("Expected payloadLengthMismatch error")
                 return
             }
@@ -197,7 +196,7 @@ final class StateDecoderTests: XCTestCase {
         let payload = Data(bytes)
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case GoCubeError.parsing(.invalidColorValue(let value, let position)) = error else {
+            guard case let GoCubeError.parsing(.invalidColorValue(value, position)) = error else {
                 XCTFail("Expected invalidColorValue error")
                 return
             }
@@ -213,7 +212,7 @@ final class StateDecoderTests: XCTestCase {
         let payload = Data(bytes)
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case GoCubeError.parsing(.invalidColorValue(let value, let position)) = error else {
+            guard case let GoCubeError.parsing(.invalidColorValue(value, position)) = error else {
                 XCTFail("Expected invalidColorValue error")
                 return
             }
@@ -255,7 +254,7 @@ final class StateDecoderTests: XCTestCase {
 
     func testRoundTrip_MixedState() throws {
         var bytes: [UInt8] = []
-        for i in 0..<54 {
+        for i in 0 ..< 54 {
             bytes.append(UInt8(i % 6))
         }
         bytes.append(contentsOf: [0x00, 0x03, 0x06, 0x09, 0x00, 0x03])
@@ -299,8 +298,8 @@ final class StateDecoderTests: XCTestCase {
     func testEstimateMovesFromSolved_ScrambledCube() throws {
         // Create a state where only half the stickers are correct
         var bytes: [UInt8] = []
-        for faceIndex in 0..<6 {
-            for stickerIndex in 0..<9 {
+        for faceIndex in 0 ..< 6 {
+            for stickerIndex in 0 ..< 9 {
                 if stickerIndex < 5 {
                     bytes.append(UInt8(faceIndex)) // Correct color
                 } else {
@@ -401,7 +400,6 @@ final class StateDecoderTests: XCTestCase {
 // MARK: - Face and Color Model Tests
 
 final class FaceColorModelTests: XCTestCase {
-
     func testCubeFace_Notation() {
         XCTAssertEqual(CubeFace.back.notation, "B")
         XCTAssertEqual(CubeFace.front.notation, "F")

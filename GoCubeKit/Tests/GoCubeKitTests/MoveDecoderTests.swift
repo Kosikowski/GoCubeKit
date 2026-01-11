@@ -1,8 +1,7 @@
-import XCTest
 @testable import GoCubeKit
+import XCTest
 
 final class MoveDecoderTests: XCTestCase {
-
     var decoder: MoveDecoder!
 
     override func setUp() {
@@ -139,7 +138,7 @@ final class MoveDecoderTests: XCTestCase {
 
     func testDecodeMove_InvalidCode_ThrowsError() {
         XCTAssertThrowsError(try decoder.decodeMove(code: 0x0C, centerOrientation: 0x00)) { error in
-            guard case GoCubeError.parsing(.invalidMoveCode(let code)) = error else {
+            guard case let GoCubeError.parsing(.invalidMoveCode(code)) = error else {
                 XCTFail("Expected invalidMoveCode error")
                 return
             }
@@ -149,7 +148,7 @@ final class MoveDecoderTests: XCTestCase {
 
     func testDecodeMove_MaxInvalidCode_ThrowsError() {
         XCTAssertThrowsError(try decoder.decodeMove(code: 0xFF, centerOrientation: 0x00)) { error in
-            guard case GoCubeError.parsing(.invalidMoveCode(let code)) = error else {
+            guard case let GoCubeError.parsing(.invalidMoveCode(code)) = error else {
                 XCTFail("Expected invalidMoveCode error")
                 return
             }
@@ -181,10 +180,10 @@ final class MoveDecoderTests: XCTestCase {
 
     func testDecode_MultipleMoves() throws {
         let payload = Data([
-            0x08, 0x00,  // R
-            0x04, 0x00,  // U
-            0x09, 0x00,  // R'
-            0x05, 0x00   // U'
+            0x08, 0x00, // R
+            0x04, 0x00, // U
+            0x09, 0x00, // R'
+            0x05, 0x00, // U'
         ])
 
         let moves = try decoder.decode(payload)
@@ -208,7 +207,7 @@ final class MoveDecoderTests: XCTestCase {
         let payload = Data([0x08, 0x00, 0x04]) // 3 bytes (odd)
 
         XCTAssertThrowsError(try decoder.decode(payload)) { error in
-            guard case GoCubeError.parsing(.oddMovePayloadLength(let length)) = error else {
+            guard case let GoCubeError.parsing(.oddMovePayloadLength(length)) = error else {
                 XCTFail("Expected oddMovePayloadLength error")
                 return
             }
@@ -258,7 +257,7 @@ final class MoveDecoderTests: XCTestCase {
             (Move(face: .right, direction: .clockwise), [0x08, 0x00]),
             (Move(face: .right, direction: .counterclockwise), [0x09, 0x00]),
             (Move(face: .left, direction: .clockwise), [0x0A, 0x00]),
-            (Move(face: .left, direction: .counterclockwise), [0x0B, 0x00])
+            (Move(face: .left, direction: .counterclockwise), [0x0B, 0x00]),
         ]
 
         for (move, expected) in moves {
@@ -278,7 +277,7 @@ final class MoveDecoderTests: XCTestCase {
     // MARK: - Round-trip Tests
 
     func testRoundTrip_AllMoves() throws {
-        for code: UInt8 in 0x00...0x0B {
+        for code: UInt8 in 0x00 ... 0x0B {
             let originalMove = try decoder.decodeMove(code: code, centerOrientation: 0x03)
             let encoded = decoder.encode(originalMove)
             let decodedMove = try decoder.decodeMove(code: encoded[0], centerOrientation: encoded[1])
@@ -293,7 +292,7 @@ final class MoveDecoderTests: XCTestCase {
 
     func testMoveCode_AllCases() {
         let expectedNotations = [
-            "B", "B'", "F", "F'", "U", "U'", "D", "D'", "R", "R'", "L", "L'"
+            "B", "B'", "F", "F'", "U", "U'", "D", "D'", "R", "R'", "L", "L'",
         ]
 
         for (index, moveCode) in MoveDecoder.MoveCode.allCases.enumerated() {
@@ -306,7 +305,6 @@ final class MoveDecoderTests: XCTestCase {
 // MARK: - Move Model Tests
 
 final class MoveModelTests: XCTestCase {
-
     func testMove_Notation() {
         XCTAssertEqual(Move.R.notation, "R")
         XCTAssertEqual(Move.RPrime.notation, "R'")
@@ -378,7 +376,6 @@ final class MoveModelTests: XCTestCase {
 // MARK: - MoveSequence Tests
 
 final class MoveSequenceTests: XCTestCase {
-
     func testMoveSequence_Empty() {
         let sequence = MoveSequence()
         XCTAssertTrue(sequence.isEmpty)

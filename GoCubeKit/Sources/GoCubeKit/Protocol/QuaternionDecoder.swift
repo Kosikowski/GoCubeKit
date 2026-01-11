@@ -2,7 +2,6 @@ import Foundation
 
 /// Decodes orientation quaternion messages from the GoCube protocol
 public struct QuaternionDecoder: Sendable {
-
     /// Expected number of quaternion components
     public static let componentCount = 4
 

@@ -2,7 +2,6 @@ import Foundation
 
 /// Decodes cube state messages from the GoCube protocol
 public struct StateDecoder: Sendable {
-
     /// Expected payload length for a cube state message
     /// 54 facelets + 6 center orientations = 60 bytes
     public static let expectedPayloadLength = 60
@@ -32,11 +31,11 @@ public struct StateDecoder: Sendable {
         // Parse 6 faces, 9 stickers each (54 bytes)
         var facelets: [[CubeColor]] = []
 
-        for faceIndex in 0..<Self.faceCount {
+        for faceIndex in 0 ..< Self.faceCount {
             let startIndex = faceIndex * Self.stickersPerFace
             var faceColors: [CubeColor] = []
 
-            for stickerIndex in 0..<Self.stickersPerFace {
+            for stickerIndex in 0 ..< Self.stickersPerFace {
                 let byteIndex = startIndex + stickerIndex
                 let colorValue = bytes[byteIndex]
 
@@ -55,7 +54,7 @@ public struct StateDecoder: Sendable {
 
         // Parse 6 center orientations (bytes 54-59)
         var centerOrientations: [UInt8] = []
-        for faceIndex in 0..<Self.faceCount {
+        for faceIndex in 0 ..< Self.faceCount {
             let orientation = bytes[54 + faceIndex]
             // Valid orientations are 0x00, 0x03, 0x06, 0x09 (clock positions)
             // But we'll accept any value and store it
@@ -96,13 +95,13 @@ public struct StateDecoder: Sendable {
         let faceColors: [UInt8] = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05]
 
         for colorValue in faceColors {
-            for _ in 0..<9 {
+            for _ in 0 ..< 9 {
                 bytes.append(colorValue)
             }
         }
 
         // 6 center orientations (all 0 for solved)
-        for _ in 0..<6 {
+        for _ in 0 ..< 6 {
             bytes.append(0x00)
         }
 
@@ -112,11 +111,11 @@ public struct StateDecoder: Sendable {
 
 // MARK: - Validation Helpers
 
-extension StateDecoder {
+public extension StateDecoder {
     /// Validate that a cube state is physically possible
     /// - Parameter state: The state to validate
     /// - Returns: True if the state could exist on a real cube
-    public func isValidState(_ state: CubeState) -> Bool {
+    func isValidState(_ state: CubeState) -> Bool {
         // Check that we have exactly 9 stickers of each color
         var colorCounts: [CubeColor: Int] = [:]
 
@@ -139,7 +138,7 @@ extension StateDecoder {
     /// Calculate how many moves away from solved (rough estimate)
     /// - Parameter state: The cube state
     /// - Returns: Estimated number of moves (not optimal)
-    public func estimateMovesFromSolved(_ state: CubeState) -> Int {
+    func estimateMovesFromSolved(_ state: CubeState) -> Int {
         // Simple heuristic: count misplaced stickers / 4
         // (each move affects ~8 stickers, but some might already be correct)
         let misplaced = 54 - state.correctStickerCount

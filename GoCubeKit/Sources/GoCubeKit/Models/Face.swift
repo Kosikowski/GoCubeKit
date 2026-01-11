@@ -3,12 +3,12 @@ import Foundation
 /// Represents a face of the cube
 /// Order matches the GoCube protocol: Back, Front, Up, Down, Right, Left
 public enum CubeFace: Int, CaseIterable, Equatable, Hashable, Sendable, CustomStringConvertible {
-    case back = 0    // Blue center
-    case front = 1   // Green center
-    case up = 2      // White center
-    case down = 3    // Yellow center
-    case right = 4   // Red center
-    case left = 5    // Orange center
+    case back = 0 // Blue center
+    case front = 1 // Green center
+    case up = 2 // White center
+    case down = 3 // Yellow center
+    case right = 4 // Red center
+    case left = 5 // Orange center
 
     /// Single character notation (standard cube notation)
     public var notation: Character {
@@ -50,7 +50,7 @@ public enum CubeFace: Int, CaseIterable, Equatable, Hashable, Sendable, CustomSt
 
     /// Create from protocol face index
     public init?(protocolIndex: Int) {
-        guard protocolIndex >= 0 && protocolIndex < 6 else { return nil }
+        guard protocolIndex >= 0, protocolIndex < 6 else { return nil }
         self.init(rawValue: protocolIndex)
     }
 }

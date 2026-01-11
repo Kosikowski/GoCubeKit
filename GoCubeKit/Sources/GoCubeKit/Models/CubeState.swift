@@ -37,8 +37,8 @@ public struct CubeState: Equatable, Hashable, Sendable {
 
     /// Create a cube state from validated facelet data (internal use)
     /// - Note: Caller must ensure data is valid (6 faces, 9 stickers each, 6 orientations)
-    internal init(validatedFacelets: [[CubeColor]], centerOrientations: [UInt8]) {
-        self.facelets = validatedFacelets
+    init(validatedFacelets: [[CubeColor]], centerOrientations: [UInt8]) {
+        facelets = validatedFacelets
         self.centerOrientations = centerOrientations
     }
 
@@ -67,7 +67,7 @@ public struct CubeState: Equatable, Hashable, Sendable {
     /// Get the color at a specific position
     /// - Returns: The color at the position, or nil if position is out of range (0-8)
     public func color(at face: CubeFace, position: Int) -> CubeColor? {
-        guard position >= 0 && position < 9 else { return nil }
+        guard position >= 0, position < 9 else { return nil }
         return facelets[face.rawValue][position]
     }
 
@@ -126,7 +126,7 @@ extension CubeState: CustomStringConvertible {
         let d = colors(for: .down)
 
         func row(_ face: [CubeColor], start: Int) -> String {
-            face[start..<start+3].map { String($0.character) }.joined(separator: " ")
+            face[start ..< start + 3].map { String($0.character) }.joined(separator: " ")
         }
 
         func faceRow(_ faces: [[CubeColor]], rowIndex: Int) -> String {
@@ -149,12 +149,12 @@ extension CubeState: CustomStringConvertible {
         let rDisplay = [r[1], r[2], r[3], r[8], r[0], r[4], r[7], r[6], r[5]]
         let bDisplay = [b[1], b[2], b[3], b[8], b[0], b[4], b[7], b[6], b[5]]
 
-        for i in 0..<3 {
+        for i in 0 ..< 3 {
             let rowStart = i * 3
-            lines.append("\(lDisplay[rowStart].character) \(lDisplay[rowStart+1].character) \(lDisplay[rowStart+2].character)  " +
-                         "\(fDisplay[rowStart].character) \(fDisplay[rowStart+1].character) \(fDisplay[rowStart+2].character)  " +
-                         "\(rDisplay[rowStart].character) \(rDisplay[rowStart+1].character) \(rDisplay[rowStart+2].character)  " +
-                         "\(bDisplay[rowStart].character) \(bDisplay[rowStart+1].character) \(bDisplay[rowStart+2].character)")
+            lines.append("\(lDisplay[rowStart].character) \(lDisplay[rowStart + 1].character) \(lDisplay[rowStart + 2].character)  " +
+                "\(fDisplay[rowStart].character) \(fDisplay[rowStart + 1].character) \(fDisplay[rowStart + 2].character)  " +
+                "\(rDisplay[rowStart].character) \(rDisplay[rowStart + 1].character) \(rDisplay[rowStart + 2].character)  " +
+                "\(bDisplay[rowStart].character) \(bDisplay[rowStart + 1].character) \(bDisplay[rowStart + 2].character)")
         }
 
         // Down face
@@ -169,15 +169,15 @@ extension CubeState: CustomStringConvertible {
 
 // MARK: - Builder
 
-extension CubeState {
+public extension CubeState {
     /// Builder for creating cube states
-    public struct Builder {
+    struct Builder {
         private var facelets: [[CubeColor]]
         private var centerOrientations: [UInt8]
 
         public init(from state: CubeState = .solved) {
-            self.facelets = state.facelets
-            self.centerOrientations = state.centerOrientations
+            facelets = state.facelets
+            centerOrientations = state.centerOrientations
         }
 
         /// Set a color at a specific position

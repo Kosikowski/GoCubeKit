@@ -197,12 +197,12 @@ extension Quaternion: Hashable {
 
 // MARK: - Approximate Equality
 
-extension Quaternion {
+public extension Quaternion {
     /// Check if two quaternions are approximately equal within a tolerance
-    public func isApproximatelyEqual(to other: Quaternion, tolerance: Double = 0.0001) -> Bool {
+    func isApproximatelyEqual(to other: Quaternion, tolerance: Double = 0.0001) -> Bool {
         abs(x - other.x) < tolerance &&
-        abs(y - other.y) < tolerance &&
-        abs(z - other.z) < tolerance &&
-        abs(w - other.w) < tolerance
+            abs(y - other.y) < tolerance &&
+            abs(z - other.z) < tolerance &&
+            abs(w - other.w) < tolerance
     }
 }

@@ -25,40 +25,40 @@ public enum GoCubeBLE: Sendable {
 /// Commands that can be sent to the GoCube via the write characteristic
 public enum GoCubeCommand: UInt8 {
     /// Request battery level (response: MessageType.battery)
-    case getBattery = 0x32          // 50
+    case getBattery = 0x32 // 50
 
     /// Request current cube state (response: MessageType.cubeState)
-    case getCubeState = 0x33        // 51
+    case getCubeState = 0x33 // 51
 
     /// Reboot the cube
-    case reboot = 0x34              // 52
+    case reboot = 0x34 // 52
 
     /// Reset cube tracking to solved state
-    case resetToSolved = 0x35       // 53
+    case resetToSolved = 0x35 // 53
 
     /// Disable 3D orientation updates
-    case disableOrientation = 0x37  // 55
+    case disableOrientation = 0x37 // 55
 
     /// Enable 3D orientation updates (~15 Hz)
-    case enableOrientation = 0x38   // 56
+    case enableOrientation = 0x38 // 56
 
     /// Request offline statistics (response: MessageType.offlineStats)
-    case getOfflineStats = 0x39     // 57
+    case getOfflineStats = 0x39 // 57
 
     /// Flash LEDs at normal speed
-    case flashLEDNormal = 0x41      // 65 'A'
+    case flashLEDNormal = 0x41 // 65 'A'
 
     /// Toggle animated LED backlight
-    case toggleAnimatedBacklight = 0x42  // 66 'B'
+    case toggleAnimatedBacklight = 0x42 // 66 'B'
 
     /// Flash LEDs slowly
-    case flashLEDSlow = 0x43        // 67 'C'
+    case flashLEDSlow = 0x43 // 67 'C'
 
     /// Toggle backlight on/off
-    case toggleBacklight = 0x44     // 68 'D'
+    case toggleBacklight = 0x44 // 68 'D'
 
     /// Request cube type (response: MessageType.cubeType)
-    case getCubeType = 0x56         // 86 'V'
+    case getCubeType = 0x56 // 86 'V'
 
     /// Calibrate gyroscope/orientation sensor
     case calibrateOrientation = 0x57 // 87 'W'

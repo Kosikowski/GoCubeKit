@@ -1,5 +1,5 @@
-import Foundation
 @preconcurrency import CoreBluetooth
+import Foundation
 import Observation
 import os.log
 
@@ -8,7 +8,6 @@ import os.log
 @Observable
 @MainActor
 public final class GoCubeManager: Sendable {
-
     // MARK: - Shared Instance (optional convenience)
 
     /// Shared instance of GoCubeManager for convenience
@@ -144,7 +143,7 @@ public final class GoCubeManager: Sendable {
         connectedCube = nil
 
         // Attempt reconnection if configured and not explicitly disconnected
-        if wasConnected && configuration.autoReconnect && shouldReconnect {
+        if wasConnected, configuration.autoReconnect, shouldReconnect {
             attemptReconnection()
         }
     }
@@ -164,7 +163,7 @@ public final class GoCubeManager: Sendable {
         let maxAttempts = configuration.maxReconnectAttempts
 
         // Check if we've exceeded max attempts (0 = unlimited)
-        if maxAttempts > 0 && reconnectAttempts >= maxAttempts {
+        if maxAttempts > 0, reconnectAttempts >= maxAttempts {
             logger.info("Max reconnection attempts (\(maxAttempts)) reached")
             reconnectAttempts = 0
             return
@@ -173,7 +172,7 @@ public final class GoCubeManager: Sendable {
         isReconnecting = true
         reconnectAttempts += 1
 
-        logger.info("Attempting reconnection (attempt \(self.reconnectAttempts))")
+        logger.info("Attempting reconnection (attempt \(reconnectAttempts))")
 
         reconnectTask = Task { [weak self] in
             guard let self else { return }

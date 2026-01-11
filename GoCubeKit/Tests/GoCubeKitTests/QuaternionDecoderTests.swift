@@ -1,8 +1,7 @@
-import XCTest
 @testable import GoCubeKit
+import XCTest
 
 final class QuaternionDecoderTests: XCTestCase {
-
     var decoder: QuaternionDecoder!
 
     override func setUp() {
@@ -98,7 +97,7 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_Empty_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "")) { error in
-            guard case GoCubeError.parsing(.invalidQuaternionFormat(let reason)) = error else {
+            guard case let GoCubeError.parsing(.invalidQuaternionFormat(reason)) = error else {
                 XCTFail("Expected invalidQuaternionFormat error")
                 return
             }
@@ -108,7 +107,7 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_WhitespaceOnly_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "   ")) { error in
-            guard case GoCubeError.parsing(.invalidQuaternionFormat(let reason)) = error else {
+            guard case let GoCubeError.parsing(.invalidQuaternionFormat(reason)) = error else {
                 XCTFail("Expected invalidQuaternionFormat error")
                 return
             }
@@ -120,7 +119,7 @@ final class QuaternionDecoderTests: XCTestCase {
         let data = Data()
 
         XCTAssertThrowsError(try decoder.decode(data)) { error in
-            guard case GoCubeError.parsing(.invalidQuaternionFormat(let reason)) = error else {
+            guard case let GoCubeError.parsing(.invalidQuaternionFormat(reason)) = error else {
                 XCTFail("Expected invalidQuaternionFormat error")
                 return
             }
@@ -130,7 +129,7 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_TooFewComponents_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "0.1#0.2#0.3")) { error in
-            guard case GoCubeError.parsing(.invalidQuaternionComponentCount(let expected, let actual)) = error else {
+            guard case let GoCubeError.parsing(.invalidQuaternionComponentCount(expected, actual)) = error else {
                 XCTFail("Expected invalidQuaternionComponentCount error")
                 return
             }
@@ -141,7 +140,7 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_TooManyComponents_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "0.1#0.2#0.3#0.4#0.5")) { error in
-            guard case GoCubeError.parsing(.invalidQuaternionComponentCount(let expected, let actual)) = error else {
+            guard case let GoCubeError.parsing(.invalidQuaternionComponentCount(expected, actual)) = error else {
                 XCTFail("Expected invalidQuaternionComponentCount error")
                 return
             }
@@ -152,7 +151,7 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_SingleComponent_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "0.5")) { error in
-            guard case GoCubeError.parsing(.invalidQuaternionComponentCount(let expected, let actual)) = error else {
+            guard case let GoCubeError.parsing(.invalidQuaternionComponentCount(expected, actual)) = error else {
                 XCTFail("Expected invalidQuaternionComponentCount error")
                 return
             }
@@ -163,7 +162,7 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_InvalidNumericX_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "abc#0.2#0.3#0.4")) { error in
-            guard case GoCubeError.parsing(.invalidQuaternionComponent(let component)) = error else {
+            guard case let GoCubeError.parsing(.invalidQuaternionComponent(component)) = error else {
                 XCTFail("Expected invalidQuaternionComponent error")
                 return
             }
@@ -173,7 +172,7 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_InvalidNumericY_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "0.1#abc#0.3#0.4")) { error in
-            guard case GoCubeError.parsing(.invalidQuaternionComponent(let component)) = error else {
+            guard case let GoCubeError.parsing(.invalidQuaternionComponent(component)) = error else {
                 XCTFail("Expected invalidQuaternionComponent error")
                 return
             }
@@ -183,7 +182,7 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_InvalidNumericZ_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "0.1#0.2#abc#0.4")) { error in
-            guard case GoCubeError.parsing(.invalidQuaternionComponent(let component)) = error else {
+            guard case let GoCubeError.parsing(.invalidQuaternionComponent(component)) = error else {
                 XCTFail("Expected invalidQuaternionComponent error")
                 return
             }
@@ -193,7 +192,7 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_InvalidNumericW_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "0.1#0.2#0.3#abc")) { error in
-            guard case GoCubeError.parsing(.invalidQuaternionComponent(let component)) = error else {
+            guard case let GoCubeError.parsing(.invalidQuaternionComponent(component)) = error else {
                 XCTFail("Expected invalidQuaternionComponent error")
                 return
             }
@@ -203,7 +202,7 @@ final class QuaternionDecoderTests: XCTestCase {
 
     func testDecodeString_EmptyComponentX_ThrowsError() {
         XCTAssertThrowsError(try decoder.decode(string: "#0.2#0.3#0.4")) { error in
-            guard case GoCubeError.parsing(.invalidQuaternionComponent(let component)) = error else {
+            guard case let GoCubeError.parsing(.invalidQuaternionComponent(component)) = error else {
                 XCTFail("Expected invalidQuaternionComponent error")
                 return
             }
@@ -285,7 +284,6 @@ final class QuaternionDecoderTests: XCTestCase {
 // MARK: - Quaternion Model Tests
 
 final class QuaternionModelTests: XCTestCase {
-
     func testQuaternion_Identity() {
         let identity = Quaternion.identity
 
@@ -500,7 +498,6 @@ final class QuaternionModelTests: XCTestCase {
 // MARK: - QuaternionSmoother Tests
 
 final class QuaternionSmootherTests: XCTestCase {
-
     func testSmoother_FirstUpdate() async {
         let smoother = QuaternionSmoother(smoothingFactor: 0.5)
         let input = Quaternion(x: 0.5, y: 0.5, z: 0.5, w: 0.5)
@@ -563,7 +560,6 @@ final class QuaternionSmootherTests: XCTestCase {
 // MARK: - OrientationManager Tests
 
 final class OrientationManagerTests: XCTestCase {
-
     func testOrientationManager_NoHome() async {
         let manager = OrientationManager()
         let q = Quaternion(x: 0.5, y: 0.5, z: 0.5, w: 0.5)

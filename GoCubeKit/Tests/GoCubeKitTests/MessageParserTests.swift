@@ -1,8 +1,7 @@
-import XCTest
 @testable import GoCubeKit
+import XCTest
 
 final class MessageParserTests: XCTestCase {
-
     var parser: MessageParser!
 
     override func setUp() {
@@ -50,13 +49,13 @@ final class MessageParserTests: XCTestCase {
         // Build a valid rotation message: * + length(2) + type(0x01) + payload(0x08, 0x00) + checksum + CRLF
         // Type 0x01 = rotation, payload = move code 0x08 (R CW), center orientation 0x00
         let bytes: [UInt8] = [
-            0x2A,       // Prefix (*)
-            0x03,       // Length (type + payload = 3 bytes)
-            0x01,       // Type (rotation)
-            0x08,       // Move code (R CW)
-            0x00,       // Center orientation
-            0x36,       // Checksum: (0x2A + 0x03 + 0x01 + 0x08 + 0x00) & 0xFF = 0x36
-            0x0D, 0x0A  // Suffix (CRLF)
+            0x2A, // Prefix (*)
+            0x03, // Length (type + payload = 3 bytes)
+            0x01, // Type (rotation)
+            0x08, // Move code (R CW)
+            0x00, // Center orientation
+            0x36, // Checksum: (0x2A + 0x03 + 0x01 + 0x08 + 0x00) & 0xFF = 0x36
+            0x0D, 0x0A, // Suffix (CRLF)
         ]
         let data = Data(bytes)
 
@@ -70,12 +69,12 @@ final class MessageParserTests: XCTestCase {
     func testParse_ValidBatteryMessage() throws {
         // Battery message: type 0x05, payload = battery level (e.g., 85%)
         let bytes: [UInt8] = [
-            0x2A,       // Prefix
-            0x02,       // Length
-            0x05,       // Type (battery)
-            0x55,       // Battery level (85 = 0x55)
-            0x86,       // Checksum: (0x2A + 0x02 + 0x05 + 0x55) & 0xFF = 0x86
-            0x0D, 0x0A  // Suffix
+            0x2A, // Prefix
+            0x02, // Length
+            0x05, // Type (battery)
+            0x55, // Battery level (85 = 0x55)
+            0x86, // Checksum: (0x2A + 0x02 + 0x05 + 0x55) & 0xFF = 0x86
+            0x0D, 0x0A, // Suffix
         ]
         let data = Data(bytes)
 
@@ -145,7 +144,7 @@ final class MessageParserTests: XCTestCase {
         let bytes: [UInt8] = [
             0x2A, 0x02, 0x08, 0x01,
             0x35, // Checksum
-            0x0D, 0x0A
+            0x0D, 0x0A,
         ]
         let data = Data(bytes)
 
@@ -161,7 +160,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data([0x2A, 0x01, 0x01]) // Only 3 bytes, minimum is 5
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case GoCubeError.parsing(.messageTooShort(let length)) = error else {
+            guard case let GoCubeError.parsing(.messageTooShort(length)) = error else {
                 XCTFail("Expected messageTooShort error")
                 return
             }
@@ -173,7 +172,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data()
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case GoCubeError.parsing(.messageTooShort(let length)) = error else {
+            guard case let GoCubeError.parsing(.messageTooShort(length)) = error else {
                 XCTFail("Expected messageTooShort error")
                 return
             }
@@ -186,7 +185,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case GoCubeError.parsing(.invalidPrefix(let received)) = error else {
+            guard case let GoCubeError.parsing(.invalidPrefix(received)) = error else {
                 XCTFail("Expected invalidPrefix error")
                 return
             }
@@ -199,7 +198,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case GoCubeError.parsing(.invalidSuffix(let received)) = error else {
+            guard case let GoCubeError.parsing(.invalidSuffix(received)) = error else {
                 XCTFail("Expected invalidSuffix error")
                 return
             }
@@ -236,7 +235,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case GoCubeError.parsing(.checksumMismatch(let expected, let received)) = error else {
+            guard case let GoCubeError.parsing(.checksumMismatch(expected, received)) = error else {
                 XCTFail("Expected checksumMismatch error")
                 return
             }
@@ -251,7 +250,7 @@ final class MessageParserTests: XCTestCase {
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
-            guard case GoCubeError.parsing(.unknownMessageType(let type)) = error else {
+            guard case let GoCubeError.parsing(.unknownMessageType(type)) = error else {
                 XCTFail("Expected unknownMessageType error")
                 return
             }
@@ -324,7 +323,7 @@ final class MessageParserTests: XCTestCase {
             (.flashLEDSlow, 0x43),
             (.toggleBacklight, 0x44),
             (.getCubeType, 0x56),
-            (.calibrateOrientation, 0x57)
+            (.calibrateOrientation, 0x57),
         ]
 
         for (command, expected) in expectedValues {
@@ -339,11 +338,11 @@ final class MessageParserTests: XCTestCase {
         // Minimum valid message: prefix + length(1) + type + checksum + suffix
         // Type with no payload
         let bytes: [UInt8] = [
-            0x2A,       // Prefix
-            0x01,       // Length (just type)
-            0x05,       // Type (battery - though no payload is unusual)
-            0x30,       // Checksum
-            0x0D, 0x0A  // Suffix
+            0x2A, // Prefix
+            0x01, // Length (just type)
+            0x05, // Type (battery - though no payload is unusual)
+            0x30, // Checksum
+            0x0D, 0x0A, // Suffix
         ]
         let data = Data(bytes)
 
@@ -373,7 +372,6 @@ final class MessageParserTests: XCTestCase {
 // MARK: - MessageBuffer Tests
 
 final class MessageBufferTests: XCTestCase {
-
     var buffer: MessageBuffer!
 
     override func setUp() {

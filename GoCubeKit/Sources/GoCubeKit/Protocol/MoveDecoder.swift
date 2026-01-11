@@ -2,7 +2,6 @@ import Foundation
 
 /// Decodes move messages from the GoCube protocol
 public struct MoveDecoder: Sendable {
-
     public init() {}
 
     /// Decode a move message payload into an array of moves
@@ -72,9 +71,9 @@ public struct MoveDecoder: Sendable {
 
 // MARK: - Move Code Constants
 
-extension MoveDecoder {
+public extension MoveDecoder {
     /// All valid move codes and their meanings
-    public enum MoveCode: UInt8, CaseIterable, Sendable {
+    enum MoveCode: UInt8, CaseIterable, Sendable {
         case backClockwise = 0x00
         case backCounterClockwise = 0x01
         case frontClockwise = 0x02

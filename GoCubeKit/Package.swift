@@ -7,7 +7,7 @@ let package = Package(
     name: "GoCubeKit",
     platforms: [
         .iOS(.v17),
-        .macOS(.v14)
+        .macOS(.v14),
     ],
     products: [
         .library(
@@ -22,7 +22,7 @@ let package = Package(
             path: "Sources/GoCubeKit",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
-                .enableUpcomingFeature("FullTypedThrows")
+                .enableUpcomingFeature("FullTypedThrows"),
             ]
         ),
         .testTarget(
@@ -31,7 +31,7 @@ let package = Package(
             path: "Tests/GoCubeKitTests",
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency"),
-                .enableUpcomingFeature("FullTypedThrows")
+                .enableUpcomingFeature("FullTypedThrows"),
             ]
         ),
     ]

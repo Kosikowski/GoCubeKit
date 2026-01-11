@@ -5,7 +5,6 @@ import os.log
 /// Isolated to CubeActor - all heavy computation happens off MainActor
 @CubeActor
 public final class CubeProcessor {
-
     private let logger = Logger(subsystem: "com.gocubekit", category: "CubeProcessor")
 
     // MARK: - Decoders (all processing happens here, off MainActor)
@@ -49,7 +48,7 @@ public final class CubeProcessor {
     // MARK: - Initialization
 
     public init(smoothingFactor: Double = 0.3) {
-        self.quaternionSmoother = QuaternionSmoother(smoothingFactor: smoothingFactor)
+        quaternionSmoother = QuaternionSmoother(smoothingFactor: smoothingFactor)
 
         // Initialize output streams
         (processedMoves, processedMovesContinuation) = AsyncStream.makeStream(of: Move.self)
@@ -206,8 +205,9 @@ public final class CubeProcessor {
         }
 
         let suffixStart = expectedTotalLength - 2
-        guard messageBuffer[suffixStart] == GoCubeFrame.suffix[0] &&
-              messageBuffer[suffixStart + 1] == GoCubeFrame.suffix[1] else {
+        guard messageBuffer[suffixStart] == GoCubeFrame.suffix[0],
+              messageBuffer[suffixStart + 1] == GoCubeFrame.suffix[1]
+        else {
             messageBuffer.removeFirst()
             return extractOneMessage()
         }

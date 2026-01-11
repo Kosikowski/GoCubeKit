@@ -8,7 +8,6 @@ import os.log
 @Observable
 @MainActor
 public final class GoCube: Identifiable, Sendable {
-
     // MARK: - Properties
 
     private let logger = Logger(subsystem: "com.gocubekit", category: "GoCube")
@@ -79,8 +78,8 @@ public final class GoCube: Identifiable, Sendable {
     // MARK: - Initialization
 
     init(device: DiscoveredDevice, communicator: BLECommunicator, processor: CubeProcessor, configuration: GoCubeConfiguration = .default) {
-        self.id = device.id
-        self.name = device.name
+        id = device.id
+        name = device.name
         self.communicator = communicator
         self.processor = processor
         self.configuration = configuration
