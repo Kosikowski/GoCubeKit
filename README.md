@@ -1,3 +1,5 @@
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FKosikowski%2FGoCubeKit%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/Kosikowski/GoCubeKit)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FKosikowski%2FGoCubeKit%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/Kosikowski/GoCubeKit)
 # GoCubeKit
 
 A modern Swift library for communicating with GoCube smart Rubik's cubes over Bluetooth Low Energy.
