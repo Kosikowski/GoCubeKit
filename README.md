@@ -141,6 +141,22 @@ GoCubeLogger.isEnabled = true
 
 Logs appear in Xcode console or Console.app (filter by "com.gocubekit").
 
+## Demo App
+
+A demo app is included in the `Demo/` folder. To build it:
+
+```bash
+# Install XcodeGen if you don't have it
+brew install xcodegen
+
+# Generate the Xcode project
+cd Demo
+xcodegen generate
+
+# Open the project
+open GoCubeDemo.xcodeproj
+```
+
 ## Protocol Reference
 
 This library implements the GoCube BLE protocol. For protocol details, see: https://github.com/oddpetersson/gocube-protocol
