@@ -1,0 +1,45 @@
+name: GoCubeDemo
+options:
+  bundleIdPrefix: com.gocubekit
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+
+packages:
+  DemoKit:
+    path: DemoKit
+
+targets:
+  GoCubeDemo-iOS:
+    type: application
+    platform: iOS
+    sources:
+      - App
+    dependencies:
+      - package: DemoKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gocubekit.demo
+        INFOPLIST_GENERATION_MODE: GeneratedFile
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "GoCubeKit needs Bluetooth to connect to your GoCube"
+        INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription: "GoCubeKit needs Bluetooth to connect to your GoCube"
+
+  GoCubeDemo-macOS:
+    type: application
+    platform: macOS
+    sources:
+      - App
+    dependencies:
+      - package: DemoKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gocubekit.demo
+        INFOPLIST_GENERATION_MODE: GeneratedFile
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "GoCubeKit needs Bluetooth to connect to your GoCube"
