@@ -29,7 +29,9 @@ final class IntegrationTests: XCTestCase {
     func testFullPipeline_RotationMessage() throws {
         // Simulate receiving a rotation message from the cube
         // Type 0x01, payload: R CW (0x08, 0x00)
-        let rawBytes: [UInt8] = [0x2A, 0x03, 0x01, 0x08, 0x00, 0x36, 0x0D, 0x0A]
+        // Frame format: prefix(1) + length(1) + [type + payload + checksum + suffix](length)
+        // length = type(1) + payload(2) + checksum(1) + suffix(2) = 6
+        let rawBytes: [UInt8] = [0x2A, 0x06, 0x01, 0x08, 0x00, 0x39, 0x0D, 0x0A]
         let rawData = Data(rawBytes)
 
         // Step 1: Parse the message
@@ -60,7 +62,8 @@ final class IntegrationTests: XCTestCase {
         }
 
         // Build the message frame
-        var frameBytes: [UInt8] = [0x2A, UInt8(payloadBytes.count + 1), 0x01]
+        // length = type(1) + payload + checksum(1) + suffix(2) = payloadBytes.count + 4
+        var frameBytes: [UInt8] = [0x2A, UInt8(payloadBytes.count + 4), 0x01]
         frameBytes.append(contentsOf: payloadBytes)
         let checksum = messageParser.calculateChecksum(frameBytes)
         frameBytes.append(checksum)
@@ -79,7 +82,8 @@ final class IntegrationTests: XCTestCase {
         let statePayload = Array(StateDecoder.solvedPayload)
 
         // Build the message frame
-        var frameBytes: [UInt8] = [0x2A, UInt8(statePayload.count + 1), 0x02]
+        // length = type(1) + payload + checksum(1) + suffix(2) = statePayload.count + 4
+        var frameBytes: [UInt8] = [0x2A, UInt8(statePayload.count + 4), 0x02]
         frameBytes.append(contentsOf: statePayload)
         let checksum = messageParser.calculateChecksum(frameBytes)
         frameBytes.append(checksum)
@@ -95,7 +99,9 @@ final class IntegrationTests: XCTestCase {
 
     func testFullPipeline_BatteryMessage() throws {
         // Battery at 75%
-        let rawBytes: [UInt8] = [0x2A, 0x02, 0x05, 0x4B, 0x7C, 0x0D, 0x0A]
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        // checksum of [0x2A, 0x05, 0x05, 0x4B] = 0x2A + 0x05 + 0x05 + 0x4B = 0x7F
+        let rawBytes: [UInt8] = [0x2A, 0x05, 0x05, 0x4B, 0x7F, 0x0D, 0x0A]
         let rawData = Data(rawBytes)
 
         let message = try messageParser.parse(rawData)
@@ -108,7 +114,8 @@ final class IntegrationTests: XCTestCase {
         let quaternionString = "0.123#0.456#0.789#0.321"
         let quaternionBytes = Array(quaternionString.utf8)
 
-        var frameBytes: [UInt8] = [0x2A, UInt8(quaternionBytes.count + 1), 0x03]
+        // length = type(1) + payload + checksum(1) + suffix(2) = quaternionBytes.count + 4
+        var frameBytes: [UInt8] = [0x2A, UInt8(quaternionBytes.count + 4), 0x03]
         frameBytes.append(contentsOf: quaternionBytes)
         let checksum = messageParser.calculateChecksum(frameBytes)
         frameBytes.append(checksum)
@@ -130,9 +137,12 @@ final class IntegrationTests: XCTestCase {
     func testMessageBuffer_FragmentedMessages() async throws {
         let buffer = MessageBuffer()
 
-        // Build two complete messages
-        let msg1Bytes: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0D, 0x0A]
-        let msg2Bytes: [UInt8] = [0x2A, 0x02, 0x05, 0x64, 0x95, 0x0D, 0x0A]
+        // Build two complete battery messages with correct frame format
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        // msg1: battery 0x55 (85%), checksum = 0x2A + 0x05 + 0x05 + 0x55 = 0x89
+        // msg2: battery 0x64 (100%), checksum = 0x2A + 0x05 + 0x05 + 0x64 = 0x98
+        let msg1Bytes: [UInt8] = [0x2A, 0x05, 0x05, 0x55, 0x89, 0x0D, 0x0A]
+        let msg2Bytes: [UInt8] = [0x2A, 0x05, 0x05, 0x64, 0x98, 0x0D, 0x0A]
 
         // Split them into fragments
         let fragment1 = Data(msg1Bytes[0 ..< 3])
@@ -188,8 +198,11 @@ final class IntegrationTests: XCTestCase {
         let buffer = MessageBuffer()
 
         // Corrupted message (bad suffix) followed by valid message
-        let corrupted = Data([0x2A, 0x02, 0x05, 0x55, 0x86, 0xFF, 0xFF])
-        let valid: [UInt8] = [0x2A, 0x02, 0x05, 0x64, 0x95, 0x0D, 0x0A]
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        // corrupted: battery with bad suffix
+        // valid: battery 0x64 (100%), checksum = 0x2A + 0x05 + 0x05 + 0x64 = 0x98
+        let corrupted = Data([0x2A, 0x05, 0x05, 0x55, 0x89, 0xFF, 0xFF])
+        let valid: [UInt8] = [0x2A, 0x05, 0x05, 0x64, 0x98, 0x0D, 0x0A]
 
         var combined = corrupted
         combined.append(contentsOf: valid)
@@ -292,7 +305,9 @@ final class IntegrationTests: XCTestCase {
     // MARK: - Helper Methods
 
     private func buildRotationMessage(code: UInt8, orientation: UInt8) -> Data {
-        var frameBytes: [UInt8] = [0x2A, 0x03, 0x01, code, orientation]
+        // Frame format: prefix(1) + length(1) + [type + payload + checksum + suffix](length)
+        // For rotation: type(1) + code(1) + orientation(1) + checksum(1) + suffix(2) = 6
+        var frameBytes: [UInt8] = [0x2A, 0x06, 0x01, code, orientation]
         let checksum = messageParser.calculateChecksum(frameBytes)
         frameBytes.append(checksum)
         frameBytes.append(contentsOf: [0x0D, 0x0A])
@@ -301,7 +316,8 @@ final class IntegrationTests: XCTestCase {
 
     private func buildOrientationMessage(quaternionString: String) -> Data {
         let quaternionBytes = Array(quaternionString.utf8)
-        var frameBytes: [UInt8] = [0x2A, UInt8(quaternionBytes.count + 1), 0x03]
+        // length = type(1) + payload + checksum(1) + suffix(2) = payload.count + 4
+        var frameBytes: [UInt8] = [0x2A, UInt8(quaternionBytes.count + 4), 0x03]
         frameBytes.append(contentsOf: quaternionBytes)
         let checksum = messageParser.calculateChecksum(frameBytes)
         frameBytes.append(checksum)

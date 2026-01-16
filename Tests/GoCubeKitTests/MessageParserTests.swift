@@ -38,23 +38,24 @@ final class MessageParserTests: XCTestCase {
     }
 
     func testCalculateChecksum_LargeSum() {
-        // Sum = 0x2A + 0x02 + 0x01 + 0x08 + 0x00 = 0x35
-        let checksum = parser.calculateChecksum([0x2A, 0x02, 0x01, 0x08, 0x00])
-        XCTAssertEqual(checksum, 0x35)
+        // Sum = 0x2A + 0x06 + 0x01 + 0x08 + 0x00 = 0x39
+        let checksum = parser.calculateChecksum([0x2A, 0x06, 0x01, 0x08, 0x00])
+        XCTAssertEqual(checksum, 0x39)
     }
 
     // MARK: - Valid Message Parsing Tests
 
     func testParse_ValidRotationMessage() throws {
-        // Build a valid rotation message: * + length(2) + type(0x01) + payload(0x08, 0x00) + checksum + CRLF
-        // Type 0x01 = rotation, payload = move code 0x08 (R CW), center orientation 0x00
+        // Build a valid rotation message
+        // Frame format: prefix(1) + length(1) + [type + payload + checksum + suffix](length)
+        // length = type(1) + payload(2) + checksum(1) + suffix(2) = 6
         let bytes: [UInt8] = [
             0x2A, // Prefix (*)
-            0x03, // Length (type + payload = 3 bytes)
+            0x06, // Length (type + payload + checksum + suffix = 6)
             0x01, // Type (rotation)
             0x08, // Move code (R CW)
             0x00, // Center orientation
-            0x36, // Checksum: (0x2A + 0x03 + 0x01 + 0x08 + 0x00) & 0xFF = 0x36
+            0x39, // Checksum: (0x2A + 0x06 + 0x01 + 0x08 + 0x00) & 0xFF = 0x39
             0x0D, 0x0A, // Suffix (CRLF)
         ]
         let data = Data(bytes)
@@ -68,12 +69,13 @@ final class MessageParserTests: XCTestCase {
 
     func testParse_ValidBatteryMessage() throws {
         // Battery message: type 0x05, payload = battery level (e.g., 85%)
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
         let bytes: [UInt8] = [
             0x2A, // Prefix
-            0x02, // Length
+            0x05, // Length
             0x05, // Type (battery)
             0x55, // Battery level (85 = 0x55)
-            0x86, // Checksum: (0x2A + 0x02 + 0x05 + 0x55) & 0xFF = 0x86
+            0x89, // Checksum: (0x2A + 0x05 + 0x05 + 0x55) & 0xFF = 0x89
             0x0D, 0x0A, // Suffix
         ]
         let data = Data(bytes)
@@ -86,8 +88,8 @@ final class MessageParserTests: XCTestCase {
 
     func testParse_ValidCubeStateMessage() throws {
         // State message: type 0x02, payload = 60 bytes (54 facelets + 6 orientations)
-        // Length = type (1) + payload (60) = 61 = 0x3D
-        var bytes: [UInt8] = [0x2A, 0x3D, 0x02] // Prefix, length (61), type
+        // length = type(1) + payload(60) + checksum(1) + suffix(2) = 64 = 0x40
+        var bytes: [UInt8] = [0x2A, 0x40, 0x02] // Prefix, length (64), type
         // Add 60 bytes of payload (54 facelets + 6 center orientations)
         let payload = Array(repeating: UInt8(0), count: 60)
         bytes.append(contentsOf: payload)
@@ -106,10 +108,11 @@ final class MessageParserTests: XCTestCase {
 
     func testParse_ValidOrientationMessage() throws {
         // Orientation message: type 0x03, payload = quaternion as ASCII
+        // length = type(1) + payload + checksum(1) + suffix(2) = payload.count + 4
         let quaternionString = "0.1#0.2#0.3#0.4"
         let quaternionBytes = Array(quaternionString.utf8)
 
-        var bytes: [UInt8] = [0x2A, UInt8(quaternionBytes.count + 1), 0x03]
+        var bytes: [UInt8] = [0x2A, UInt8(quaternionBytes.count + 4), 0x03]
         bytes.append(contentsOf: quaternionBytes)
         let checksum = parser.calculateChecksum(bytes)
         bytes.append(checksum)
@@ -124,10 +127,11 @@ final class MessageParserTests: XCTestCase {
 
     func testParse_ValidOfflineStatsMessage() throws {
         // Offline stats: type 0x07
+        // length = type(1) + payload + checksum(1) + suffix(2) = payload.count + 4
         let statsString = "100#3600#5"
         let statsBytes = Array(statsString.utf8)
 
-        var bytes: [UInt8] = [0x2A, UInt8(statsBytes.count + 1), 0x07]
+        var bytes: [UInt8] = [0x2A, UInt8(statsBytes.count + 4), 0x07]
         bytes.append(contentsOf: statsBytes)
         let checksum = parser.calculateChecksum(bytes)
         bytes.append(checksum)
@@ -141,9 +145,10 @@ final class MessageParserTests: XCTestCase {
 
     func testParse_ValidCubeTypeMessage() throws {
         // Cube type: type 0x08, payload = 0x00 (standard) or 0x01 (edge)
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
         let bytes: [UInt8] = [
-            0x2A, 0x02, 0x08, 0x01,
-            0x35, // Checksum
+            0x2A, 0x05, 0x08, 0x01,
+            0x38, // Checksum: (0x2A + 0x05 + 0x08 + 0x01) = 0x38
             0x0D, 0x0A,
         ]
         let data = Data(bytes)
@@ -181,7 +186,8 @@ final class MessageParserTests: XCTestCase {
     }
 
     func testParse_InvalidPrefix_ThrowsError() {
-        let bytes: [UInt8] = [0x00, 0x02, 0x05, 0x55, 0x5C, 0x0D, 0x0A] // Wrong prefix
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        let bytes: [UInt8] = [0x00, 0x05, 0x05, 0x55, 0x5F, 0x0D, 0x0A] // Wrong prefix
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
@@ -194,7 +200,8 @@ final class MessageParserTests: XCTestCase {
     }
 
     func testParse_InvalidSuffix_ThrowsError() {
-        let bytes: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x00, 0x00] // Wrong suffix
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        let bytes: [UInt8] = [0x2A, 0x05, 0x05, 0x55, 0x89, 0x00, 0x00] // Wrong suffix
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
@@ -207,7 +214,8 @@ final class MessageParserTests: XCTestCase {
     }
 
     func testParse_WrongSuffixFirstByte_ThrowsError() {
-        let bytes: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0E, 0x0A] // 0x0E instead of 0x0D
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        let bytes: [UInt8] = [0x2A, 0x05, 0x05, 0x55, 0x89, 0x0E, 0x0A] // 0x0E instead of 0x0D
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
@@ -219,7 +227,8 @@ final class MessageParserTests: XCTestCase {
     }
 
     func testParse_WrongSuffixSecondByte_ThrowsError() {
-        let bytes: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0D, 0x0B] // 0x0B instead of 0x0A
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        let bytes: [UInt8] = [0x2A, 0x05, 0x05, 0x55, 0x89, 0x0D, 0x0B] // 0x0B instead of 0x0A
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
@@ -231,7 +240,9 @@ final class MessageParserTests: XCTestCase {
     }
 
     func testParse_ChecksumMismatch_ThrowsError() {
-        let bytes: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0xFF, 0x0D, 0x0A] // Wrong checksum (0xFF)
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        // correct checksum = (0x2A + 0x05 + 0x05 + 0x55) = 0x89
+        let bytes: [UInt8] = [0x2A, 0x05, 0x05, 0x55, 0xFF, 0x0D, 0x0A] // Wrong checksum (0xFF)
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
@@ -239,14 +250,16 @@ final class MessageParserTests: XCTestCase {
                 XCTFail("Expected checksumMismatch error")
                 return
             }
-            XCTAssertEqual(expected, 0x86)
+            XCTAssertEqual(expected, 0x89)
             XCTAssertEqual(received, 0xFF)
         }
     }
 
     func testParse_UnknownMessageType_ThrowsError() {
         // Valid frame structure but unknown type 0xFF
-        let bytes: [UInt8] = [0x2A, 0x01, 0xFF, 0x2A, 0x0D, 0x0A]
+        // length = type(1) + checksum(1) + suffix(2) = 4
+        // checksum = (0x2A + 0x04 + 0xFF) = 0x2D
+        let bytes: [UInt8] = [0x2A, 0x04, 0xFF, 0x2D, 0x0D, 0x0A]
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
@@ -259,8 +272,9 @@ final class MessageParserTests: XCTestCase {
     }
 
     func testParse_LengthMismatch_ThrowsError() {
-        // Length says 5 bytes (type + 4 payload), but only 2 payload bytes provided
-        let bytes: [UInt8] = [0x2A, 0x05, 0x05, 0x55, 0x00, 0x0D, 0x0A]
+        // Length says 8 bytes but only 7 total bytes provided (actual length = 5)
+        // This tests that when the declared length doesn't match actual data length
+        let bytes: [UInt8] = [0x2A, 0x08, 0x05, 0x55, 0x89, 0x0D, 0x0A]
         let data = Data(bytes)
 
         XCTAssertThrowsError(try parser.parse(data)) { error in
@@ -335,13 +349,14 @@ final class MessageParserTests: XCTestCase {
     // MARK: - Edge Cases
 
     func testParse_MinimumValidMessage() throws {
-        // Minimum valid message: prefix + length(1) + type + checksum + suffix
-        // Type with no payload
+        // Minimum valid message: prefix + length + type + checksum + suffix
+        // length = type(1) + checksum(1) + suffix(2) = 4 (no payload)
+        // checksum = (0x2A + 0x04 + 0x05) = 0x33
         let bytes: [UInt8] = [
             0x2A, // Prefix
-            0x01, // Length (just type)
+            0x04, // Length (type + checksum + suffix)
             0x05, // Type (battery - though no payload is unusual)
-            0x30, // Checksum
+            0x33, // Checksum
             0x0D, 0x0A, // Suffix
         ]
         let data = Data(bytes)
@@ -354,8 +369,11 @@ final class MessageParserTests: XCTestCase {
 
     func testParse_MaxLengthByte() throws {
         // Test with length = 255 (max uint8)
+        // length = type(1) + payload(250) + checksum(1) + suffix(2) = 254 (or use 255 = 251 payload)
+        // Let's use length = 255, which means type(1) + payload(251) + checksum(1) + suffix(2) = 255
+        // So payload size = 255 - 4 = 251
         var bytes: [UInt8] = [0x2A, 0xFF, 0x05]
-        let payload = Array(repeating: UInt8(0x42), count: 254)
+        let payload = Array(repeating: UInt8(0x42), count: 251)
         bytes.append(contentsOf: payload)
         let checksum = parser.calculateChecksum(bytes)
         bytes.append(checksum)
@@ -365,7 +383,7 @@ final class MessageParserTests: XCTestCase {
         let message = try parser.parse(data)
 
         XCTAssertEqual(message.type, .battery)
-        XCTAssertEqual(message.payload.count, 254)
+        XCTAssertEqual(message.payload.count, 251)
     }
 }
 
@@ -385,7 +403,9 @@ final class MessageBufferTests: XCTestCase {
     }
 
     func testAppend_CompleteMessage_ReturnsMessage() async {
-        let bytes: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0D, 0x0A]
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        // checksum = (0x2A + 0x05 + 0x05 + 0x55) = 0x89
+        let bytes: [UInt8] = [0x2A, 0x05, 0x05, 0x55, 0x89, 0x0D, 0x0A]
         let data = Data(bytes)
 
         let messages = await buffer.append(data)
@@ -395,7 +415,7 @@ final class MessageBufferTests: XCTestCase {
     }
 
     func testAppend_PartialMessage_ReturnsEmpty() async {
-        let partialData = Data([0x2A, 0x02, 0x05])
+        let partialData = Data([0x2A, 0x05, 0x05])
 
         let messages = await buffer.append(partialData)
 
@@ -403,8 +423,9 @@ final class MessageBufferTests: XCTestCase {
     }
 
     func testAppend_TwoPartialMessages_ReturnsMerged() async {
-        let part1 = Data([0x2A, 0x02, 0x05])
-        let part2 = Data([0x55, 0x86, 0x0D, 0x0A])
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        let part1 = Data([0x2A, 0x05, 0x05])
+        let part2 = Data([0x55, 0x89, 0x0D, 0x0A])
 
         let messages1 = await buffer.append(part1)
         XCTAssertEqual(messages1.count, 0)
@@ -414,8 +435,11 @@ final class MessageBufferTests: XCTestCase {
     }
 
     func testAppend_TwoCompleteMessages_ReturnsBoth() async {
-        let msg1: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0D, 0x0A]
-        let msg2: [UInt8] = [0x2A, 0x02, 0x05, 0x64, 0x95, 0x0D, 0x0A]
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        // msg1: battery 0x55 (85%), checksum = 0x89
+        // msg2: battery 0x64 (100%), checksum = 0x98
+        let msg1: [UInt8] = [0x2A, 0x05, 0x05, 0x55, 0x89, 0x0D, 0x0A]
+        let msg2: [UInt8] = [0x2A, 0x05, 0x05, 0x64, 0x98, 0x0D, 0x0A]
         var combined = msg1
         combined.append(contentsOf: msg2)
 
@@ -426,7 +450,7 @@ final class MessageBufferTests: XCTestCase {
 
     func testAppend_GarbageBeforeMessage_SkipsGarbage() async {
         let garbage: [UInt8] = [0xFF, 0xFE, 0xFD]
-        let validMessage: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0D, 0x0A]
+        let validMessage: [UInt8] = [0x2A, 0x05, 0x05, 0x55, 0x89, 0x0D, 0x0A]
         var combined = garbage
         combined.append(contentsOf: validMessage)
 
@@ -437,9 +461,10 @@ final class MessageBufferTests: XCTestCase {
     }
 
     func testAppend_GarbageBetweenMessages_SkipsGarbage() async {
-        let msg1: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0D, 0x0A]
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        let msg1: [UInt8] = [0x2A, 0x05, 0x05, 0x55, 0x89, 0x0D, 0x0A]
         let garbage: [UInt8] = [0xFF, 0xFE]
-        let msg2: [UInt8] = [0x2A, 0x02, 0x05, 0x64, 0x95, 0x0D, 0x0A]
+        let msg2: [UInt8] = [0x2A, 0x05, 0x05, 0x64, 0x98, 0x0D, 0x0A]
         var combined = msg1
         combined.append(contentsOf: garbage)
         combined.append(contentsOf: msg2)
@@ -450,20 +475,21 @@ final class MessageBufferTests: XCTestCase {
     }
 
     func testClear_EmptiesBuffer() async {
-        let partialData = Data([0x2A, 0x02, 0x05])
+        let partialData = Data([0x2A, 0x05, 0x05])
         _ = await buffer.append(partialData)
 
         await buffer.clear()
 
         // After clear, adding more data shouldn't complete the previous message
-        let moreData = Data([0x55, 0x86, 0x0D, 0x0A])
+        let moreData = Data([0x55, 0x89, 0x0D, 0x0A])
         let messages = await buffer.append(moreData)
 
         XCTAssertEqual(messages.count, 0)
     }
 
     func testAppend_ByteByByte_EventuallyReturnsMessage() async {
-        let bytes: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x0D, 0x0A]
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        let bytes: [UInt8] = [0x2A, 0x05, 0x05, 0x55, 0x89, 0x0D, 0x0A]
 
         var allMessages: [Data] = []
         for byte in bytes {
@@ -476,8 +502,9 @@ final class MessageBufferTests: XCTestCase {
 
     func testAppend_InvalidSuffix_SkipsInvalidFrame() async {
         // Message with wrong suffix followed by valid message
-        let invalid: [UInt8] = [0x2A, 0x02, 0x05, 0x55, 0x86, 0x00, 0x00]
-        let valid: [UInt8] = [0x2A, 0x02, 0x05, 0x64, 0x95, 0x0D, 0x0A]
+        // length = type(1) + payload(1) + checksum(1) + suffix(2) = 5
+        let invalid: [UInt8] = [0x2A, 0x05, 0x05, 0x55, 0x89, 0x00, 0x00]
+        let valid: [UInt8] = [0x2A, 0x05, 0x05, 0x64, 0x98, 0x0D, 0x0A]
         var combined = invalid
         combined.append(contentsOf: valid)
 

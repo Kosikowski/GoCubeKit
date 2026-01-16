@@ -172,6 +172,7 @@ public final class GoCubeManager: Sendable {
         isReconnecting = true
         reconnectAttempts += 1
 
+        // swiftformat:disable:next redundantSelf
         logger.info("Attempting reconnection (attempt \(self.reconnectAttempts))")
 
         reconnectTask = Task { [weak self] in

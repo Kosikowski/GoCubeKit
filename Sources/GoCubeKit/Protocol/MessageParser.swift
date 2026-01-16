@@ -47,8 +47,9 @@ public struct MessageParser: Sendable {
         }
 
         // Extract length and validate
+        // Frame format: prefix(1) + length(1) + [type + payload + checksum + suffix](declaredLength)
         let declaredLength = Int(bytes[GoCubeFrame.lengthOffset])
-        let expectedTotalLength = 1 + 1 + declaredLength + 1 + 2 // prefix + length + payload(incl type) + checksum + suffix
+        let expectedTotalLength = 2 + declaredLength
         guard bytes.count == expectedTotalLength else {
             throw GoCubeError.parsing(.payloadLengthMismatch(
                 expected: expectedTotalLength,
@@ -171,8 +172,9 @@ public actor MessageBuffer {
         }
 
         // Get declared length
+        // Frame format: prefix(1) + length(1) + [type + payload + checksum + suffix](declaredLength)
         let declaredLength = Int(buffer[GoCubeFrame.lengthOffset])
-        let expectedTotalLength = 1 + 1 + declaredLength + 1 + 2 // prefix + length + payload + checksum + suffix
+        let expectedTotalLength = 2 + declaredLength
 
         // Wait for complete message
         guard buffer.count >= expectedTotalLength else {

@@ -75,10 +75,13 @@ public final class CubeProcessor {
     /// Start listening to raw BLE data stream
     /// - Parameter rawDataStream: Stream of raw BLE data from BLEDelegateProxy
     public func startListening(to rawDataStream: AsyncStream<Data>) {
+        GoCubeLogger.debug("CubeProcessor starting to listen to raw data stream")
         rawDataListenerTask = Task { [weak self] in
+            GoCubeLogger.debug("CubeProcessor listener task started")
             for await data in rawDataStream {
                 self?.processRawData(data)
             }
+            GoCubeLogger.debug("CubeProcessor listener task ended")
         }
     }
 
@@ -93,14 +96,18 @@ public final class CubeProcessor {
     /// Process raw BLE data - buffers and extracts complete messages
     /// Called directly from BLEDelegateProxy (both on @CubeActor)
     public func processRawData(_ data: Data) {
+        GoCubeLogger.logData(data, prefix: "Processor received")
         messageBuffer.append(contentsOf: data)
 
         // Extract and process complete messages
         while let messageData = extractOneMessage() {
+            GoCubeLogger.debug("Extracted message: \(messageData.count) bytes")
             do {
                 let message = try messageParser.parse(messageData)
+                GoCubeLogger.debug("Parsed message type: \(message.type)")
                 processMessage(message)
             } catch {
+                GoCubeLogger.error("Failed to parse message: \(error)")
                 logger.error("Failed to parse message: \(error.localizedDescription)")
             }
         }
@@ -198,7 +205,8 @@ public final class CubeProcessor {
         }
 
         let declaredLength = Int(messageBuffer[GoCubeFrame.lengthOffset])
-        let expectedTotalLength = 1 + 1 + declaredLength + 1 + 2
+        // Frame format: prefix(1) + length(1) + [type + payload + checksum + suffix](declaredLength)
+        let expectedTotalLength = 2 + declaredLength
 
         guard messageBuffer.count >= expectedTotalLength else {
             return nil

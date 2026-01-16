@@ -2,6 +2,8 @@
 
 A modern Swift library for communicating with GoCube smart Rubik's cubes over Bluetooth Low Energy.
 
+![GoCubeKit Demo](images/Screenshot.png)
+
 ## Features
 
 - **Device Discovery & Connection** - BLE scanning and management with optional auto-reconnection
@@ -125,6 +127,19 @@ config.maxReconnectAttempts = 5
 
 let manager = GoCubeManager(configuration: config)
 ```
+
+### Debug Logging
+
+Enable debug logging to see BLE communication details:
+
+```swift
+import GoCubeKit
+
+// Enable before connecting
+GoCubeLogger.isEnabled = true
+```
+
+Logs appear in Xcode console or Console.app (filter by "com.gocubekit").
 
 ## Protocol Reference
 

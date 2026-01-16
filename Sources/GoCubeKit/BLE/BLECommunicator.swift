@@ -110,21 +110,37 @@ private final class BLEDelegateProxy: NSObject, CBCentralManagerDelegate, CBPeri
         error: Error?
     ) {
         // Hot path: yield directly to stream (no Task overhead)
-        guard error == nil,
-              characteristic.uuid == GoCubeBLE.notifyCharacteristicUUID,
-              let data = characteristic.value else { return }
+        if let error = error {
+            GoCubeLogger.error("didUpdateValueFor error: \(error)")
+            return
+        }
+        guard characteristic.uuid == GoCubeBLE.notifyCharacteristicUUID else {
+            GoCubeLogger.debug("didUpdateValueFor wrong characteristic: \(characteristic.uuid)")
+            return
+        }
+        guard let data = characteristic.value else {
+            GoCubeLogger.warning("didUpdateValueFor no data")
+            return
+        }
+        GoCubeLogger.logData(data, prefix: "BLE received")
+        if rawDataContinuation == nil {
+            GoCubeLogger.warning("rawDataContinuation is nil!")
+        }
         rawDataContinuation?.yield(data)
     }
 
     func peripheral(
         _: CBPeripheral,
-        didUpdateNotificationStateFor _: CBCharacteristic,
+        didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
         if let error = error {
+            GoCubeLogger.error("Notification state error for \(characteristic.uuid): \(error)")
             Task { @MainActor in
                 communicator?.handleNotificationStateError(error)
             }
+        } else {
+            GoCubeLogger.info("Notifications enabled for \(characteristic.uuid), isNotifying: \(characteristic.isNotifying)")
         }
     }
 }
@@ -255,6 +271,11 @@ public final class BLECommunicator: Sendable {
             throw .bluetoothPoweredOff
         }
 
+        // Cancel any pending connection attempt
+        if connectionContinuation != nil {
+            resumeConnection(with: .failure(GoCubeError.connectionFailed("Connection cancelled")))
+        }
+
         stopScanning()
         setConnectionState(.connecting)
 
@@ -330,6 +351,10 @@ public final class BLECommunicator: Sendable {
         switch state {
         case .poweredOff:
             setConnectionState(.disconnected)
+            // Resume any pending connection continuation
+            if connectionContinuation != nil {
+                resumeConnection(with: .failure(GoCubeError.bluetoothPoweredOff))
+            }
         default:
             break
         }
